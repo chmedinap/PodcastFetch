@@ -1,0 +1,45 @@
+# PodcastFetch - Feed List
+# ========================
+#
+# INSTRUCTIONS:
+# ------------
+# Add one podcast feed URL per line. You can use either:
+#
+# 1. Direct RSS Feed URLs:
+#    https://feeds.example.com/podcast.rss
+#    https://podcast.com/feed.xml
+#
+# 2. Apple Podcast Links:
+#    https://podcasts.apple.com/us/podcast/example-podcast/id123456789
+#    https://podcasts.apple.com/any-country/podcast/name/id123456789
+#
+# The application will automatically:
+# - Detect Apple Podcast links and convert them to RSS feeds
+# - Extract all episode metadata
+# - Store everything in the database
+#
+# TIPS:
+# -----
+# - You can add comments (lines starting with #)
+# - Empty lines are ignored
+# - Mix RSS feeds and Apple Podcast links freely
+# - One URL per line
+#
+# EXAMPLES:
+# --------
+# # Technology Podcasts
+# https://feeds.example.com/tech-podcast.rss
+# https://podcasts.apple.com/us/podcast/tech-talk/id123456789
+#
+# # News Podcasts
+# https://news-podcast.com/feed
+#
+# ========================
+# Add your podcast feeds below:
+# ========================
+
+# Your current feeds:
+https://anchor.fm/s/e6c692d8/podcast/rss
+#https://cosasdeinternet.libsyn.com/rss
+#https://anchor.fm/s/b6fd6f4/podcast/rss
+https://podcasts.apple.com/us/podcast/pluribus-the-official-podcast/id1846198705
