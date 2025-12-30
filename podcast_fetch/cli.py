@@ -59,64 +59,62 @@ def process_feeds_file(feeds_file='feeds.txt'):
             os.remove(db_path)
     
     # Connect to database
-    conn = get_db_connection(db_path)
-    
-    # Ensure summary table has new columns
-    add_podcast_image_url_to_summary(conn)
-    
-    # Process each feed
-    for idx, feed_url in enumerate(feeds, 1):
-        print(f"{'='*60}")
-        print(f"Processing feed {idx}/{len(feeds)}: {feed_url}")
-        print(f"{'='*60}")
+    with get_db_connection(db_path) as conn:
+        # Ensure summary table has new columns
+        add_podcast_image_url_to_summary(conn)
         
-        try:
-            # Normalize feed URL (handle Apple Podcast links)
-            normalized_url = normalize_feed_url(feed_url)
+        # Process each feed
+        for idx, feed_url in enumerate(feeds, 1):
+            print(f"{'='*60}")
+            print(f"Processing feed {idx}/{len(feeds)}: {feed_url}")
+            print(f"{'='*60}")
             
-            # Collect data
-            print("📥 Fetching podcast data...")
-            df = collect_data(normalized_url)
-            
-            if df.empty:
-                print(f"⚠️  No episodes found in feed: {feed_url}")
+            try:
+                # Normalize feed URL (handle Apple Podcast links)
+                normalized_url = normalize_feed_url(feed_url)
+                
+                # Collect data
+                print("📥 Fetching podcast data...")
+                df = collect_data(normalized_url)
+                
+                if df.empty:
+                    print(f"⚠️  No episodes found in feed: {feed_url}")
+                    continue
+                
+                # Get podcast title
+                title = df['author'].iloc[0] if len(df) > 0 else 'unknown'
+                print(f"📻 Podcast: {title}")
+                print(f"📊 Episodes found: {len(df)}")
+                
+                # Extract RSS feed URL and podcast image URL
+                rss_feed_url = df.attrs.get('rss_feed_url', None) if hasattr(df, 'attrs') else None
+                podcast_image_url = df.attrs.get('podcast_image_url', None) if hasattr(df, 'attrs') else None
+                
+                if not rss_feed_url:
+                    rss_feed_url = normalized_url
+                
+                # Check if podcast already exists
+                if table_exists(conn, title):
+                    print(f"ℹ️  Podcast '{title}' already exists. Updating...")
+                else:
+                    print(f"✨ Creating new podcast: '{title}'")
+                
+                # Save to database
+                print("💾 Saving to database...")
+                df_clean = clean_dataframe_for_sqlite(df)
+                df_clean.to_sql(title, conn, if_exists='replace', index=False)
+                add_indexes_to_table(conn, title)
+                
+                # Update summary
+                update_summary(conn, title, podcast_image_url=podcast_image_url, rss_feed_url=rss_feed_url)
+                
+                print(f"✅ Successfully processed: {title}\n")
+                
+            except Exception as e:
+                print(f"❌ Error processing feed '{feed_url}': {e}")
+                print(f"   Skipping to next feed...\n")
                 continue
-            
-            # Get podcast title
-            title = df['author'].iloc[0] if len(df) > 0 else 'unknown'
-            print(f"📻 Podcast: {title}")
-            print(f"📊 Episodes found: {len(df)}")
-            
-            # Extract RSS feed URL and podcast image URL
-            rss_feed_url = df.attrs.get('rss_feed_url', None) if hasattr(df, 'attrs') else None
-            podcast_image_url = df.attrs.get('podcast_image_url', None) if hasattr(df, 'attrs') else None
-            
-            if not rss_feed_url:
-                rss_feed_url = normalized_url
-            
-            # Check if podcast already exists
-            if table_exists(conn, title):
-                print(f"ℹ️  Podcast '{title}' already exists. Updating...")
-            else:
-                print(f"✨ Creating new podcast: '{title}'")
-            
-            # Save to database
-            print("💾 Saving to database...")
-            df_clean = clean_dataframe_for_sqlite(df)
-            df_clean.to_sql(title, conn, if_exists='replace', index=False)
-            add_indexes_to_table(conn, title)
-            
-            # Update summary
-            update_summary(conn, title, podcast_image_url=podcast_image_url, rss_feed_url=rss_feed_url)
-            
-            print(f"✅ Successfully processed: {title}\n")
-            
-        except Exception as e:
-            print(f"❌ Error processing feed '{feed_url}': {e}")
-            print(f"   Skipping to next feed...\n")
-            continue
     
-    conn.close()
     print(f"{'='*60}")
     print("✅ Feed processing complete!")
     print(f"{'='*60}")
@@ -135,46 +133,44 @@ def list_podcasts():
         print("❌ Database is corrupted. Please recreate it.")
         return False
     
-    conn = get_db_connection(db_path)
-    cursor = conn.cursor()
-    
-    try:
-        # Get all tables (podcasts)
-        cursor.execute("""
-            SELECT name FROM sqlite_master 
-            WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'summary'
-            ORDER BY name
-        """)
+    with get_db_connection(db_path) as conn:
+        cursor = conn.cursor()
         
-        podcasts = cursor.fetchall()
-        
-        if not podcasts:
-            print("📭 No podcasts found in database.")
-            print("   Process feeds first using: podcast-fetch process-feeds")
-            return False
-        
-        print(f"📻 Found {len(podcasts)} podcast(s):\n")
-        
-        for idx, (podcast_name,) in enumerate(podcasts, 1):
-            # Get summary info
-            cursor.execute("SELECT num_episodes, num_episodes_downloaded FROM summary WHERE name = ?", (podcast_name,))
-            result = cursor.fetchone()
+        try:
+            # Get all tables (podcasts)
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'summary'
+                ORDER BY name
+            """)
             
-            if result:
-                total, downloaded = result
-                print(f"{idx}. {podcast_name}")
-                print(f"   Episodes: {downloaded}/{total} downloaded")
-            else:
-                print(f"{idx}. {podcast_name}")
-            print()
-        
-        return True
-        
-    except sqlite3.Error as e:
-        print(f"❌ Database error: {e}")
-        return False
-    finally:
-        conn.close()
+            podcasts = cursor.fetchall()
+            
+            if not podcasts:
+                print("📭 No podcasts found in database.")
+                print("   Process feeds first using: podcast-fetch process-feeds")
+                return False
+            
+            print(f"📻 Found {len(podcasts)} podcast(s):\n")
+            
+            for idx, (podcast_name,) in enumerate(podcasts, 1):
+                # Get summary info
+                cursor.execute("SELECT num_episodes, num_episodes_downloaded FROM summary WHERE name = ?", (podcast_name,))
+                result = cursor.fetchone()
+                
+                if result:
+                    total, downloaded = result
+                    print(f"{idx}. {podcast_name}")
+                    print(f"   Episodes: {downloaded}/{total} downloaded")
+                else:
+                    print(f"{idx}. {podcast_name}")
+                print()
+            
+            return True
+            
+        except sqlite3.Error as e:
+            print(f"❌ Database error: {e}")
+            return False
 
 
 def show_status(podcast_name=None):
@@ -185,34 +181,44 @@ def show_status(podcast_name=None):
         print("❌ Database not found. Process feeds first using: podcast-fetch process-feeds")
         return False
     
-    conn = get_db_connection(db_path)
-    
-    try:
-        if podcast_name:
-            # Show status for specific podcast
-            if not table_exists(conn, podcast_name):
-                print(f"❌ Podcast '{podcast_name}' not found in database.")
-                return False
+    with get_db_connection(db_path) as conn:
+        try:
+            if podcast_name:
+                # Show status for specific podcast
+                if not table_exists(conn, podcast_name):
+                    print(f"❌ Podcast '{podcast_name}' not found in database.")
+                    return False
+                
+                summary = show_podcast_summary(conn, [podcast_name])
+                if summary:
+                    print(f"\n📊 Summary for '{podcast_name}':")
+                    print(f"   Episodes to download: {summary[podcast_name]}")
+            else:
+                # Show status for all podcasts
+                # Get all podcast names from database
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT name FROM sqlite_master 
+                    WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'summary'
+                    ORDER BY name
+                """)
+                all_podcasts = [row[0] for row in cursor.fetchall()]
+                
+                if not all_podcasts:
+                    print("📭 No podcasts found in database.")
+                    return False
+                
+                summary = show_podcast_summary(conn, all_podcasts)
+                if summary:
+                    print("\n📊 Download Status:")
+                    for name, count in summary.items():
+                        print(f"   {name}: {count} episode(s) to download")
             
-            summary = show_podcast_summary(conn, [podcast_name])
-            if summary:
-                print(f"\n📊 Summary for '{podcast_name}':")
-                print(f"   Episodes to download: {summary[podcast_name]}")
-        else:
-            # Show status for all podcasts
-            summary = show_podcast_summary(conn, None)
-            if summary:
-                print("\n📊 Download Status:")
-                for name, count in summary.items():
-                    print(f"   {name}: {count} episode(s) to download")
-        
-        return True
-        
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return False
-    finally:
-        conn.close()
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            return False
 
 
 def download_episodes(podcast_name, last_only=False):
@@ -223,37 +229,34 @@ def download_episodes(podcast_name, last_only=False):
         print("❌ Database not found. Process feeds first using: podcast-fetch process-feeds")
         return False
     
-    conn = get_db_connection(db_path)
-    
-    try:
-        if not table_exists(conn, podcast_name):
-            print(f"❌ Podcast '{podcast_name}' not found in database.")
-            print("   Use 'podcast-fetch list' to see available podcasts.")
+    with get_db_connection(db_path) as conn:
+        try:
+            if not table_exists(conn, podcast_name):
+                print(f"❌ Podcast '{podcast_name}' not found in database.")
+                print("   Use 'podcast-fetch list' to see available podcasts.")
+                return False
+            
+            if last_only:
+                print(f"📥 Downloading last episode for '{podcast_name}'...")
+                success = download_last_episode(conn, podcast_name)
+            else:
+                print(f"📥 Downloading all episodes for '{podcast_name}'...")
+                successful, failed = download_all_episodes(conn, podcast_name)
+                success = successful > 0
+            
+            if success:
+                print("✅ Download complete!")
+            else:
+                print("⚠️  No episodes were downloaded.")
+            
+            return success
+            
+        except KeyboardInterrupt:
+            print("\n⚠️  Download interrupted by user.")
             return False
-        
-        if last_only:
-            print(f"📥 Downloading last episode for '{podcast_name}'...")
-            success = download_last_episode(conn, podcast_name)
-        else:
-            print(f"📥 Downloading all episodes for '{podcast_name}'...")
-            successful, failed = download_all_episodes(conn, podcast_name)
-            success = successful > 0
-        
-        if success:
-            print("✅ Download complete!")
-        else:
-            print("⚠️  No episodes were downloaded.")
-        
-        return success
-        
-    except KeyboardInterrupt:
-        print("\n⚠️  Download interrupted by user.")
-        return False
-    except Exception as e:
-        print(f"❌ Error: {e}")
-        return False
-    finally:
-        conn.close()
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            return False
 
 
 def add_feed(feed_url):

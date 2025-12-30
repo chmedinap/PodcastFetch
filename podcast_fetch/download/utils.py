@@ -73,6 +73,7 @@ def show_podcast_summary(conn: sqlite3.Connection, podcast_names: List[str]) -> 
             summary[podcast_name] = 0
             continue
         
+        count = 0
         try:
             cursor = conn.cursor()
             cursor.execute(f"""
@@ -88,6 +89,7 @@ def show_podcast_summary(conn: sqlite3.Connection, podcast_names: List[str]) -> 
             logger.debug(traceback.format_exc())
             print(f"  ⚠️  '{podcast_name}': Error reading database")
             summary[podcast_name] = 0
+            count = 0
         
         if count > 0:
             print(f"  📻 '{podcast_name}': {count} episode(s) to download")
