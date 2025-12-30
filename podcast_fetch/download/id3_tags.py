@@ -7,6 +7,7 @@ import traceback
 from pathlib import Path
 from typing import Optional
 from podcast_fetch import config
+from podcast_fetch.database.queries import validate_and_quote_table_name
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -177,6 +178,7 @@ def update_episode_id3_tags_from_db(
         cursor = conn.cursor()
         
         # Get episode data from database
+        safe_table_name = validate_and_quote_table_name(podcast_name)
         cursor.execute(f"""
             SELECT 
                 title,
@@ -186,7 +188,7 @@ def update_episode_id3_tags_from_db(
                 summary,
                 published,
                 episode_image_url
-            FROM {podcast_name}
+            FROM {safe_table_name}
             WHERE id = ?
         """, (episode_id,))
         

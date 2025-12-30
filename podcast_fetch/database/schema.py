@@ -3,8 +3,9 @@ Database schema operations and migrations.
 """
 
 import sqlite3
+import re
 from pathlib import Path
-from podcast_fetch.database.queries import table_exists
+from podcast_fetch.database.queries import table_exists, validate_and_quote_table_name
 
 
 def create_summary_table_if_not_exists(conn: sqlite3.Connection) -> None:
@@ -96,13 +97,14 @@ def add_episode_metadata_columns_to_table(conn: sqlite3.Connection, table_name: 
     cursor = conn.cursor()
     
     # Get existing columns
-    cursor.execute(f"PRAGMA table_info({table_name})")
+    safe_table_name = validate_and_quote_table_name(table_name)
+    cursor.execute(f"PRAGMA table_info({safe_table_name})")
     existing_columns = [row[1] for row in cursor.fetchall()]
     
     # Add episode_number column if it doesn't exist
     if 'episode_number' not in existing_columns:
         try:
-            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN episode_number TEXT")
+            cursor.execute(f"ALTER TABLE {safe_table_name} ADD COLUMN episode_number TEXT")
             conn.commit()
             print(f"  ✓ Added column 'episode_number' to table '{table_name}'")
         except sqlite3.Error as e:
@@ -113,7 +115,7 @@ def add_episode_metadata_columns_to_table(conn: sqlite3.Connection, table_name: 
     # Add season_number column if it doesn't exist
     if 'season_number' not in existing_columns:
         try:
-            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN season_number TEXT")
+            cursor.execute(f"ALTER TABLE {safe_table_name} ADD COLUMN season_number TEXT")
             conn.commit()
             print(f"  ✓ Added column 'season_number' to table '{table_name}'")
         except sqlite3.Error as e:
@@ -137,13 +139,14 @@ def add_author_raw_column_to_table(conn: sqlite3.Connection, table_name: str) ->
     cursor = conn.cursor()
     
     # Get existing columns
-    cursor.execute(f"PRAGMA table_info({table_name})")
+    safe_table_name = validate_and_quote_table_name(table_name)
+    cursor.execute(f"PRAGMA table_info({safe_table_name})")
     existing_columns = [row[1] for row in cursor.fetchall()]
     
     # Add column if it doesn't exist
     if 'author_raw' not in existing_columns:
         try:
-            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN author_raw TEXT")
+            cursor.execute(f"ALTER TABLE {safe_table_name} ADD COLUMN author_raw TEXT")
             conn.commit()
             print(f"  ✓ Added column 'author_raw' to table '{table_name}'")
         except sqlite3.Error as e:
@@ -168,13 +171,14 @@ def add_download_columns_to_table(conn: sqlite3.Connection, table_name: str) -> 
     cursor = conn.cursor()
     
     # Get existing columns
-    cursor.execute(f"PRAGMA table_info({table_name})")
+    safe_table_name = validate_and_quote_table_name(table_name)
+    cursor.execute(f"PRAGMA table_info({safe_table_name})")
     existing_columns = [row[1] for row in cursor.fetchall()]
     
     # Add author_raw column if it doesn't exist
     if 'author_raw' not in existing_columns:
         try:
-            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN author_raw TEXT")
+            cursor.execute(f"ALTER TABLE {safe_table_name} ADD COLUMN author_raw TEXT")
             conn.commit()
             print(f"  ✓ Added column 'author_raw' to table '{table_name}'")
         except sqlite3.Error as e:
@@ -185,7 +189,7 @@ def add_download_columns_to_table(conn: sqlite3.Connection, table_name: str) -> 
     # Add episode_number column if it doesn't exist
     if 'episode_number' not in existing_columns:
         try:
-            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN episode_number TEXT")
+            cursor.execute(f"ALTER TABLE {safe_table_name} ADD COLUMN episode_number TEXT")
             conn.commit()
             print(f"  ✓ Added column 'episode_number' to table '{table_name}'")
         except sqlite3.Error as e:
@@ -196,7 +200,7 @@ def add_download_columns_to_table(conn: sqlite3.Connection, table_name: str) -> 
     # Add season_number column if it doesn't exist
     if 'season_number' not in existing_columns:
         try:
-            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN season_number TEXT")
+            cursor.execute(f"ALTER TABLE {safe_table_name} ADD COLUMN season_number TEXT")
             conn.commit()
             print(f"  ✓ Added column 'season_number' to table '{table_name}'")
         except sqlite3.Error as e:
@@ -214,7 +218,10 @@ def add_download_columns_to_table(conn: sqlite3.Connection, table_name: str) -> 
     for column_name, column_type in columns_to_add.items():
         if column_name not in existing_columns:
             try:
-                cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+                # Column names come from a fixed dict, so they're safe, but we quote them for consistency
+                # SQLite supports case-sensitive identifiers when quoted
+                safe_column_name = f'"{column_name}"'
+                cursor.execute(f"ALTER TABLE {safe_table_name} ADD COLUMN {safe_column_name} {column_type}")
                 conn.commit()
                 print(f"  ✓ Added column '{column_name}' to table '{table_name}'")
             except sqlite3.Error as e:
@@ -259,8 +266,9 @@ def update_download_info(conn: sqlite3.Connection, podcast_name: str, episode_id
     # Update the database
     try:
         cursor = conn.cursor()
+        safe_table_name = validate_and_quote_table_name(podcast_name)
         cursor.execute(f"""
-            UPDATE {podcast_name} 
+            UPDATE {safe_table_name} 
             SET Saved_Path = ?, 
                 Size = ?, 
                 File_name = ?
@@ -404,8 +412,10 @@ def add_indexes_to_table(conn: sqlite3.Connection, table_name: str) -> None:
         return
     
     cursor = conn.cursor()
+    safe_table_name = validate_and_quote_table_name(table_name)
     
     # Indexes to create: (index_name, column, unique)
+    # Index names are derived from table_name, so they're safe, but we validate anyway
     indexes_to_create = [
         (f"idx_{table_name}_status", "status", False),
         (f"idx_{table_name}_published", "published", False),
@@ -416,9 +426,12 @@ def add_indexes_to_table(conn: sqlite3.Connection, table_name: str) -> None:
         if not index_exists(conn, table_name, index_name):
             try:
                 unique_clause = "UNIQUE" if is_unique else ""
+                # Index names are derived from validated table_name, so they're safe
+                # But we still quote them for safety
+                safe_index_name = f'"{index_name}"'
                 cursor.execute(f"""
-                    CREATE {unique_clause} INDEX IF NOT EXISTS {index_name}
-                    ON {table_name}({column})
+                    CREATE {unique_clause} INDEX IF NOT EXISTS {safe_index_name}
+                    ON {safe_table_name}({column})
                 """)
                 conn.commit()
                 print(f"  ✓ Created index '{index_name}' on column '{column}'")

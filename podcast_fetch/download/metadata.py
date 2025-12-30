@@ -6,7 +6,7 @@ import sqlite3
 import logging
 import traceback
 import pandas as pd
-from podcast_fetch.database.queries import table_exists, summary_exists
+from podcast_fetch.database.queries import table_exists, summary_exists, validate_and_quote_table_name
 from podcast_fetch.database.schema import create_summary_table_if_not_exists
 from podcast_fetch import config
 
@@ -48,12 +48,13 @@ def update_summary(conn: sqlite3.Connection, podcast_name: str, podcast_image_ur
     try:
         # Use SQL aggregation to calculate statistics directly in database
         # This avoids reading the entire table into memory
+        safe_table_name = validate_and_quote_table_name(podcast_name)
         cursor.execute(f"""
             SELECT 
                 COUNT(*) as num_episodes,
                 SUM(CASE WHEN status = 'downloaded' THEN 1 ELSE 0 END) as num_episodes_downloaded,
                 SUM(CASE WHEN status = 'not downloaded' THEN 1 ELSE 0 END) as num_episodes_not_downloaded
-            FROM {podcast_name}
+            FROM {safe_table_name}
         """)
         
         stats = cursor.fetchone()
@@ -71,7 +72,7 @@ def update_summary(conn: sqlite3.Connection, podcast_name: str, podcast_image_ur
     try:
         cursor.execute(f"""
             SELECT published, published_parsed
-            FROM {podcast_name}
+            FROM {safe_table_name}
             WHERE status = 'downloaded'
             ORDER BY published DESC
             LIMIT 1

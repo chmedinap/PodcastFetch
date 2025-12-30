@@ -7,7 +7,7 @@ import logging
 import traceback
 import pandas as pd
 from typing import List, Dict
-from podcast_fetch.database.queries import table_exists
+from podcast_fetch.database.queries import table_exists, validate_and_quote_table_name
 from podcast_fetch import config
 
 # Set up logging
@@ -76,9 +76,10 @@ def show_podcast_summary(conn: sqlite3.Connection, podcast_names: List[str]) -> 
         count = 0
         try:
             cursor = conn.cursor()
+            safe_table_name = validate_and_quote_table_name(podcast_name)
             cursor.execute(f"""
                 SELECT COUNT(*) 
-                FROM {podcast_name} 
+                FROM {safe_table_name} 
                 WHERE status = 'not downloaded'
             """)
             count = cursor.fetchone()[0]
@@ -128,7 +129,8 @@ def parse_episode_date(conn: sqlite3.Connection, podcast_name: str, episode_id: 
                 logger.debug(f"Failed to parse published_date '{published_date}': {e}. Trying published_parsed.")
                 try:
                     cursor = conn.cursor()
-                    cursor.execute(f"SELECT published_parsed FROM {podcast_name} WHERE id = ?", (episode_id,))
+                    safe_table_name = validate_and_quote_table_name(podcast_name)
+                    cursor.execute(f"SELECT published_parsed FROM {safe_table_name} WHERE id = ?", (episode_id,))
                     parsed_result = cursor.fetchone()
                     if parsed_result and parsed_result[0]:
                         try:

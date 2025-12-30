@@ -3,7 +3,46 @@ Database query utility functions.
 """
 
 import sqlite3
+import re
 from typing import Optional, Tuple
+
+
+def validate_and_quote_table_name(table_name: str) -> str:
+    """
+    Validate and safely quote a table name for use in SQL queries.
+    
+    This function prevents SQL injection by ensuring table names contain only
+    safe characters (alphanumeric and underscores) and then quotes them properly.
+    
+    Parameters:
+    table_name: The table name to validate and quote
+    
+    Returns:
+    A safely quoted table name
+    
+    Raises:
+    ValueError: If the table name contains invalid characters
+    
+    Example:
+        >>> validate_and_quote_table_name("my_podcast")
+        '"my_podcast"'
+        >>> validate_and_quote_table_name("invalid-name")
+        ValueError: Invalid table name
+    """
+    if not table_name or not isinstance(table_name, str):
+        raise ValueError(f"Table name must be a non-empty string, got: {type(table_name)}")
+    
+    # Table names should only contain alphanumeric characters and underscores
+    # This matches the normalization function in collection.py
+    if not re.match(r'^[a-z0-9_]+$', table_name):
+        raise ValueError(
+            f"Invalid table name '{table_name}'. "
+            f"Table names must contain only lowercase letters, numbers, and underscores."
+        )
+    
+    # SQLite supports double quotes for identifiers
+    # This safely quotes the table name even if it's a reserved word
+    return f'"{table_name}"'
 
 
 def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
@@ -68,9 +107,10 @@ def has_downloaded_episodes(conn: sqlite3.Connection, podcast_name: str) -> bool
         return False
     
     cursor = conn.cursor()
+    safe_table_name = validate_and_quote_table_name(podcast_name)
     cursor.execute(f"""
         SELECT COUNT(*) 
-        FROM {podcast_name} 
+        FROM {safe_table_name} 
         WHERE status = 'downloaded'
     """)
     count = cursor.fetchone()[0]
@@ -97,9 +137,10 @@ def verify_downloaded_files_exist(conn: sqlite3.Connection, podcast_name: str) -
         return (False, 0, 0)
     
     cursor = conn.cursor()
+    safe_table_name = validate_and_quote_table_name(podcast_name)
     cursor.execute(f"""
         SELECT Saved_Path 
-        FROM {podcast_name} 
+        FROM {safe_table_name} 
         WHERE status = 'downloaded' AND Saved_Path IS NOT NULL
     """)
     

@@ -11,7 +11,7 @@ import pandas as pd
 from pathlib import Path
 from typing import Tuple
 from podcast_fetch import config
-from podcast_fetch.database.queries import table_exists
+from podcast_fetch.database.queries import table_exists, validate_and_quote_table_name
 from podcast_fetch.database.schema import add_download_columns_to_table, update_download_info
 from podcast_fetch.download.utils import sanitize_filename, parse_episode_date
 from podcast_fetch.download.metadata import update_summary
@@ -222,9 +222,10 @@ def download_all_episodes(
     
     # Get all episodes that haven't been downloaded, ordered by published date (newest first)
     cursor = conn.cursor()
+    safe_table_name = validate_and_quote_table_name(podcast_name)
     cursor.execute(f"""
         SELECT title, link_direct, published, id, episode_image_url, link
-        FROM {podcast_name} 
+        FROM {safe_table_name} 
         WHERE status = 'not downloaded'
         ORDER BY published DESC
     """)
@@ -350,7 +351,7 @@ def download_all_episodes(
             except Exception as e:
                 logger.debug(f"Error updating ID3 tags for existing file: {e}")
             # Update status even if file exists (no commit yet - batch transaction)
-            cursor.execute(f"UPDATE {podcast_name} SET status = 'downloaded' WHERE id = ?", (episode_id,))
+            cursor.execute(f"UPDATE {safe_table_name} SET status = 'downloaded' WHERE id = ?", (episode_id,))
             # Update download info fields (no auto commit - batch transaction)
             update_download_info(conn, podcast_name, episode_id, file_path, auto_commit=False)
             successful_downloads += 1
@@ -485,7 +486,7 @@ def download_all_episodes(
             
             # Update status in database (no commit yet - batch transaction)
             try:
-                cursor.execute(f"UPDATE {podcast_name} SET status = 'downloaded' WHERE id = ?", (episode_id,))
+                cursor.execute(f"UPDATE {safe_table_name} SET status = 'downloaded' WHERE id = ?", (episode_id,))
                 # Update download info fields (Saved_Path, Size, File_name) - no auto commit
                 update_download_info(conn, podcast_name, episode_id, file_path, auto_commit=False)
             except sqlite3.Error as db_error:
@@ -626,9 +627,10 @@ def download_last_episode(
         return False
     
     cursor = conn.cursor()
+    safe_table_name = validate_and_quote_table_name(podcast_name)
     cursor.execute(f"""
         SELECT title, link_direct, published, id 
-        FROM {podcast_name} 
+        FROM {safe_table_name} 
         WHERE status = 'not downloaded'
         ORDER BY published DESC
         LIMIT 1
@@ -670,7 +672,7 @@ def download_last_episode(
                 print(f"  🏷️  ID3 tags updated")
         except Exception as e:
             logger.debug(f"Error updating ID3 tags for existing file: {e}")
-        cursor.execute(f"UPDATE {podcast_name} SET status = 'downloaded' WHERE id = ?", (episode_id,))
+        cursor.execute(f"UPDATE {safe_table_name} SET status = 'downloaded' WHERE id = ?", (episode_id,))
         conn.commit()
         update_download_info(conn, podcast_name, episode_id, file_path)
         update_summary(conn, podcast_name)
@@ -690,7 +692,7 @@ def download_last_episode(
             logger.debug(traceback.format_exc())
         
         try:
-            cursor.execute(f"UPDATE {podcast_name} SET status = 'downloaded' WHERE id = ?", (episode_id,))
+            cursor.execute(f"UPDATE {safe_table_name} SET status = 'downloaded' WHERE id = ?", (episode_id,))
             conn.commit()
             update_download_info(conn, podcast_name, episode_id, file_path)
             update_summary(conn, podcast_name)

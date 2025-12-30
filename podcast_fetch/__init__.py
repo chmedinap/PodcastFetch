@@ -35,7 +35,8 @@ from podcast_fetch.database.queries import (
     table_exists,
     summary_exists,
     has_downloaded_episodes,
-    verify_downloaded_files_exist
+    verify_downloaded_files_exist,
+    validate_and_quote_table_name
 )
 from podcast_fetch.database.schema import (
     add_author_raw_column_to_table,
@@ -77,6 +78,7 @@ __all__ = [
     'summary_exists',
     'has_downloaded_episodes',
     'verify_downloaded_files_exist',
+    'validate_and_quote_table_name',
     'add_author_raw_column_to_table',
     'update_all_tables_with_author_raw_column',
     'add_episode_metadata_columns_to_table',
