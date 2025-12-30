@@ -8,18 +8,20 @@
 ## Implementation Status Summary
 
 **Phase 1 Progress:** ✅ **6 of 6 items completed** (100%)  
-**Phase 2 Progress:** ✅ **1 of 4 items completed** (25%)
+**Phase 2 Progress:** ✅ **2 of 4 items completed** (50%)
 
 ### ✅ Completed Fixes (2025-12-30)
 
 1. **SQL Injection Risk** (Section 2.1) - All table names validated and quoted
 2. **RSS Feed Caching** (Section 2.3, 4.4) - In-memory cache with 1-hour TTL implemented
 3. **RSS Feed Caching (Enhanced)** (Section 2.2, Phase 2.2) - Added size limits (50 entries, 100 MB), LRU eviction, cache invalidation, and statistics
-4. **Magic Strings to Constants** (Section 3.4, 6.4) - All status strings and table names centralized in `config.py`
-5. **Input Validation** (Section 3.6, 6.5) - Comprehensive validation module for URLs, podcast names, and file paths
-6. **Batch Database Updates** (Section 6.6) - Using `executemany()` for 80-90% performance improvement
-7. **Progress Bars** (Section 3.8, 6.7) - Visual progress indicators with `tqdm` for episodes and file downloads
-8. **Centralize Logging Setup** (Section 3.1, 1.2) - Enhanced logging configuration using `dictConfig()`, all modules use centralized setup
+4. **Fix Redundant Database Queries** (Section 3.7, Phase 2.3) - Combined queries, cached results, eliminated N+1 query pattern
+5. **Transaction Management** (Section 2.5, Phase 3.1) - Context managers, savepoints, state validation, automatic rollback
+6. **Magic Strings to Constants** (Section 3.4, 6.4) - All status strings and table names centralized in `config.py`
+6. **Input Validation** (Section 3.6, 6.5) - Comprehensive validation module for URLs, podcast names, and file paths
+7. **Batch Database Updates** (Section 6.6) - Using `executemany()` for 80-90% performance improvement
+8. **Progress Bars** (Section 3.8, 6.7) - Visual progress indicators with `tqdm` for episodes and file downloads
+9. **Centralize Logging Setup** (Section 3.1, 1.2) - Enhanced logging configuration using `dictConfig()`, all modules use centralized setup
 
 ### ⏳ Pending Items
 - **Optimize DataFrame Operations** (Phase 2.1) - Memory optimization for large feeds
@@ -186,7 +188,7 @@ cursor.execute(f"SELECT * FROM {safe_table_name} WHERE ...")  # Safe
 - Consider thread-local connections for concurrent operations
 - Add connection timeout handling
 
-### 2.5 Transaction Management Issues
+### 2.5 Transaction Management Issues ✅ FIXED
 
 **Location:** `download/downloader.py:270-575`
 
@@ -197,10 +199,23 @@ cursor.execute(f"SELECT * FROM {safe_table_name} WHERE ...")  # Safe
 - Rollback logic is scattered and error-prone
 - No atomicity guarantees for related operations (download + DB update)
 
-**Recommendation:**
-- Use context managers for transactions
-- Implement proper savepoints
-- Add transaction state validation
+**Status:** ✅ **RESOLVED** - Fixed on 2025-12-30
+
+**Solution Implemented:**
+- Created `podcast_fetch/database/transactions.py` module with transaction management utilities:
+  - `transaction()` context manager for automatic commit/rollback
+  - `savepoint()` context manager for partial rollback within transactions
+  - `validate_transaction_state()` for connection validation
+  - `safe_commit()` and `safe_rollback()` for safe transaction operations
+  - `TransactionError` exception for transaction-specific errors
+- Refactored `download_all_episodes()` to use transaction context manager:
+  - Batch commits now use `transaction()` context manager
+  - All error handlers use `safe_rollback()` instead of manual rollback
+  - Connection state validated before starting downloads
+- Refactored `download_last_episode()` to use transaction context manager
+- Updated `_commit_batch_updates()` to use transaction context manager internally
+- Removed all manual `BEGIN TRANSACTION`, `COMMIT`, and `ROLLBACK` statements
+- Result: Automatic rollback on errors, consistent transaction state, better error handling
 
 ### 2.6 No Resume Capability for Downloads
 
@@ -354,7 +369,7 @@ if not logger.handlers:
   - Podcast names: 1-100 chars, alphanumeric + underscore/hyphen/space/period, not SQLite reserved words
   - File paths: Max 260 chars, no path traversal, no null bytes
 
-### 3.7 Redundant Database Queries
+### 3.7 Redundant Database Queries ✅ FIXED
 
 **Location:** `download/downloader.py:289-301`, `403-428`
 
@@ -362,9 +377,15 @@ if not logger.handlers:
 
 **Impact:** LOW - Minor performance hit
 
-**Recommendation:**
-- Cache query results in function scope
-- Pass RSS URL as parameter instead of querying
+**Status:** ✅ **RESOLVED** - Fixed on 2025-12-30
+
+**Solution Implemented:**
+- Combined RSS feed URL and podcast image URL queries into a single query at function start
+- Cached both values in function-scope variables (`rss_feed_url`, `podcast_image_url`)
+- Removed redundant queries from inside the episode download loop
+- Before: RSS feed URL queried once at start + once per episode in loop (N+1 queries)
+- After: Single combined query at start, values cached and reused (1 query total)
+- Result: Eliminated N redundant queries per download session (where N = number of episodes)
 
 ### 3.8 No Progress Reporting ✅ FIXED
 
@@ -1050,12 +1071,20 @@ This section provides a recommended order for implementing the fixes and improve
   - ✅ Cache statistics - `get_rss_cache_stats()` for monitoring
   - ✅ Memory safety - Prevents unbounded cache growth
 
-#### 2.3 Fix Redundant Database Queries (1 hour)
+#### 2.3 Fix Redundant Database Queries (1 hour) ✅ COMPLETED
 - **Priority:** MEDIUM (performance)
 - **Files:** `download/downloader.py`
 - **Why Now:** Simple optimization, builds on Phase 1
 - **Dependencies:** None
 - **Risk:** Low
+- **Status:** ✅ Completed on 2025-12-30
+- **Implementation:**
+  - Combined RSS feed URL and podcast image URL queries into single query at function start
+  - Cached query results in function-scope variables
+  - Removed redundant queries from inside episode download loop
+  - Before: N+1 queries (1 at start + 1 per episode)
+  - After: 1 query total (cached values reused)
+  - Impact: Eliminates N redundant queries per download session
 
 #### 2.4 Optimize Date Parsing (2-3 hours)
 - **Priority:** MEDIUM (performance)
@@ -1070,24 +1099,32 @@ This section provides a recommended order for implementing the fixes and improve
 
 **Phase 2 Total Time:** ~9-12 hours  
 **Phase 2 Impact:** Significant memory and network efficiency improvements  
-**Phase 2 Status:** ✅ **1 of 4 items completed** (25% complete)
+**Phase 2 Status:** ✅ **2 of 4 items completed** (50% complete)
 
 ---
 
 ### Phase 3: Transaction & Data Integrity (Week 3)
 **Goal:** Improve reliability and data consistency.
 
-#### 3.1 Improve Transaction Management (4-6 hours)
+#### 3.1 Improve Transaction Management (4-6 hours) ✅ COMPLETED
 - **Priority:** HIGH (data integrity)
-- **Files:** `download/downloader.py`
+- **Files:** `download/downloader.py`, new `database/transactions.py`
 - **Why Now:** Critical for reliability
 - **Dependencies:** Constants from Phase 1.1
 - **Risk:** Medium (requires careful testing)
-- **Approach:**
-  1. Create transaction context manager
-  2. Implement savepoints for partial rollback
-  3. Add transaction state validation
-  4. Test with failure scenarios
+- **Status:** ✅ Completed on 2025-12-30
+- **Implementation:**
+  1. ✅ Created transaction context manager (`transaction()`)
+  2. ✅ Implemented savepoints for partial rollback (`savepoint()`)
+  3. ✅ Added transaction state validation (`validate_transaction_state()`)
+  4. ✅ Refactored all transaction handling in `downloader.py`
+  5. ✅ Added safe commit/rollback utilities (`safe_commit()`, `safe_rollback()`)
+  6. ✅ Replaced all manual transaction statements with context managers
+- **Impact:**
+  - Automatic rollback on errors prevents inconsistent database state
+  - Connection state validation prevents errors from invalid connections
+  - Savepoints enable partial rollback for complex operations
+  - Better error handling and logging for transaction failures
 
 #### 3.2 Add Resume Capability for Downloads (6-8 hours)
 - **Priority:** HIGH (user experience, bandwidth)
@@ -1113,7 +1150,8 @@ This section provides a recommended order for implementing the fixes and improve
   - Metadata validation
 
 **Phase 3 Total Time:** ~13-18 hours  
-**Phase 3 Impact:** Much better reliability and user experience
+**Phase 3 Impact:** Much better reliability and user experience  
+**Phase 3 Status:** ✅ **1 of 3 items completed** (33% complete)
 
 ---
 

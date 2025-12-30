@@ -15,6 +15,14 @@ from podcast_fetch import config
 from podcast_fetch.config import EPISODE_STATUS_NOT_DOWNLOADED, EPISODE_STATUS_DOWNLOADED
 from podcast_fetch.database.queries import table_exists, validate_and_quote_table_name
 from podcast_fetch.database.schema import add_download_columns_to_table, update_download_info
+from podcast_fetch.database.transactions import (
+    transaction,
+    savepoint,
+    safe_commit,
+    safe_rollback,
+    validate_transaction_state,
+    TransactionError
+)
 from podcast_fetch.download.utils import sanitize_filename, parse_episode_date
 from podcast_fetch.download.metadata import update_summary
 from podcast_fetch.data.collection import get_episode_xml_from_rss
@@ -28,7 +36,6 @@ logger = setup_logging(__name__)
 
 def _commit_batch_updates(
     conn: sqlite3.Connection,
-    cursor: sqlite3.Cursor,
     safe_table_name: str,
     pending_status_updates: list,
     pending_download_info_updates: list,
@@ -37,41 +44,46 @@ def _commit_batch_updates(
     """
     Commit batch updates using executemany() for better performance.
     
+    Uses transaction context manager for safe transaction handling.
+    
     Parameters:
     conn: SQLite connection object
-    cursor: SQLite cursor object
     safe_table_name: Validated and quoted table name
     pending_status_updates: List of (status, episode_id) tuples
     pending_download_info_updates: List of (file_path_str, file_size, file_name, episode_id) tuples
     batch_count: Number of episodes in this batch (for logging)
     """
     try:
-        # Batch update status using executemany()
-        if pending_status_updates:
-            cursor.executemany(
-                f"UPDATE {safe_table_name} SET status = ? WHERE id = ?",
-                pending_status_updates
-            )
-            logger.debug(f"Batch updated {len(pending_status_updates)} episode statuses using executemany()")
+        with transaction(conn, autocommit=True) as cursor:
+            # Batch update status using executemany()
+            if pending_status_updates:
+                cursor.executemany(
+                    f"UPDATE {safe_table_name} SET status = ? WHERE id = ?",
+                    pending_status_updates
+                )
+                logger.debug(f"Batch updated {len(pending_status_updates)} episode statuses using executemany()")
+            
+            # Batch update download info using executemany()
+            if pending_download_info_updates:
+                cursor.executemany(
+                    f"""
+                    UPDATE {safe_table_name} 
+                    SET Saved_Path = ?, 
+                        Size = ?, 
+                        File_name = ?
+                    WHERE id = ?
+                    """,
+                    pending_download_info_updates
+                )
+                logger.debug(f"Batch updated {len(pending_download_info_updates)} download info records using executemany()")
+            
+            # Transaction automatically committed on exit
+            print(f"  💾 Committed batch of {batch_count} updates to database (using executemany())")
         
-        # Batch update download info using executemany()
-        if pending_download_info_updates:
-            cursor.executemany(
-                f"""
-                UPDATE {safe_table_name} 
-                SET Saved_Path = ?, 
-                    Size = ?, 
-                    File_name = ?
-                WHERE id = ?
-                """,
-                pending_download_info_updates
-            )
-            logger.debug(f"Batch updated {len(pending_download_info_updates)} download info records using executemany()")
-        
-        # Commit all updates
-        conn.commit()
-        print(f"  💾 Committed batch of {batch_count} updates to database (using executemany())")
-        
+    except TransactionError as e:
+        logger.error(f"Transaction error in batch commit: {e}")
+        logger.debug(traceback.format_exc())
+        raise
     except sqlite3.Error as e:
         logger.error(f"Database error in batch commit: {e}")
         logger.debug(traceback.format_exc())
@@ -326,38 +338,41 @@ def download_all_episodes(
     print(f"Starting downloads with {delay_seconds} second delay between episodes...")
     print(f"Using batch transactions: committing every {batch_size} episodes\n")
     
-    # Begin transaction for batch processing
-    cursor.execute("BEGIN TRANSACTION")
+    # Validate connection state before starting
+    if not validate_transaction_state(conn):
+        logger.error("Invalid database connection state, cannot proceed")
+        return (0, 0)
+    
+    cursor = conn.cursor()
     
     # Download podcast image once (if available)
     podcast_base_folder = Path(downloads_folder) / podcast_name
     podcast_image_downloaded = False
     
-    # Try to get podcast image URL from summary table or from feed metadata
-    # We'll need to store this when collecting data - for now, try to get from first episode
-    # or we can add it to summary table later
+    # Query RSS feed URL and podcast image URL once at the start (cache to avoid redundant queries)
+    rss_feed_url = None
     podcast_image_url = None
     try:
-        # Check if we stored it in summary (we'll add this column later)
-        # For now, we'll get it from the feed when processing
-        pass
-    except sqlite3.Error:
-        pass
-    
-    # Get RSS feed URL from summary table for metadata extraction
-    rss_feed_url = None
-    try:
+        # Get both RSS feed URL and podcast image URL in a single query
         cursor.execute("""
-            SELECT rss_feed_url FROM summary WHERE name = ?
+            SELECT rss_feed_url, podcast_image_url FROM summary WHERE name = ?
         """, (podcast_name,))
         result = cursor.fetchone()
-        if result and result[0]:
-            rss_feed_url = result[0]
-            logger.info(f"Found RSS feed URL in summary: {rss_feed_url}")
+        if result:
+            rss_feed_url = result[0] if result[0] else None
+            podcast_image_url = result[1] if len(result) > 1 and result[1] else None
+            
+            if rss_feed_url:
+                logger.info(f"Found RSS feed URL in summary: {rss_feed_url}")
+            else:
+                logger.debug(f"RSS feed URL not found in summary for {podcast_name}")
+            
+            if podcast_image_url:
+                logger.debug(f"Found podcast image URL in summary: {podcast_image_url}")
         else:
-            logger.debug(f"RSS feed URL not found in summary for {podcast_name}")
+            logger.debug(f"Summary entry not found for {podcast_name}")
     except sqlite3.Error as e:
-        logger.debug(f"Could not get RSS feed URL from summary (column may not exist): {e}")
+        logger.debug(f"Could not get RSS feed URL or podcast image URL from summary (column may not exist): {e}")
     
     # Create progress bar for episode downloads
     pbar = tqdm(
@@ -436,12 +451,17 @@ def download_all_episodes(
             
             # Commit batch if we've reached the batch size
             if len(pending_updates) >= batch_size:
-                _commit_batch_updates(conn, cursor, safe_table_name, pending_status_updates, pending_download_info_updates, len(pending_updates))
-                pending_updates = []
-                pending_status_updates = []
-                pending_download_info_updates = []
-                # Begin new transaction
-                cursor.execute("BEGIN TRANSACTION")
+                try:
+                    _commit_batch_updates(conn, safe_table_name, pending_status_updates, pending_download_info_updates, len(pending_updates))
+                    pending_updates = []
+                    pending_status_updates = []
+                    pending_download_info_updates = []
+                except (TransactionError, sqlite3.Error) as db_error:
+                    logger.error(f"Database error committing batch: {db_error}")
+                    safe_rollback(conn)
+                    pending_updates = []
+                    pending_status_updates = []
+                    pending_download_info_updates = []
             
             # Add delay before next episode (except for the last one)
             if idx < total_episodes:
@@ -479,33 +499,22 @@ def download_all_episodes(
                 # Don't fail the download if ID3 tag update fails
             
             # Save episode metadata XML (original RSS entry) for archival
-            # Try to get RSS feed URL from summary table if not already retrieved
-            if not rss_feed_url:
-                try:
-                    # Try to get RSS feed URL from summary (we'll store it there)
-                    cursor.execute("""
-                        SELECT rss_feed_url FROM summary WHERE name = ? LIMIT 1
-                    """, (podcast_name,))
-                    result = cursor.fetchone()
-                    if result and result[0]:
-                        rss_feed_url = result[0]
-                        logger.info(f"Retrieved RSS feed URL from summary: {rss_feed_url}")
-                    elif episode_link:
-                        # Fallback: try to construct RSS URL from episode link domain
-                        from urllib.parse import urlparse
-                        parsed = urlparse(episode_link)
-                        # Common RSS feed patterns
-                        possible_rss_urls = [
-                            f"{parsed.scheme}://{parsed.netloc}/feed",
-                            f"{parsed.scheme}://{parsed.netloc}/rss",
-                            f"{parsed.scheme}://{parsed.netloc}/podcast.xml",
-                            f"{parsed.scheme}://{parsed.netloc}/feed.xml",
-                        ]
-                        # Try the first one as fallback
-                        rss_feed_url = possible_rss_urls[0]
-                        logger.warning(f"RSS feed URL not in summary, using fallback: {rss_feed_url}")
-                except sqlite3.Error as e:
-                    logger.warning(f"Could not get RSS feed URL from summary: {e}")
+            # RSS feed URL is already cached from function start, no need to query again
+            # If not available, try fallback construction from episode link
+            if not rss_feed_url and episode_link:
+                # Fallback: try to construct RSS URL from episode link domain
+                from urllib.parse import urlparse
+                parsed = urlparse(episode_link)
+                # Common RSS feed patterns
+                possible_rss_urls = [
+                    f"{parsed.scheme}://{parsed.netloc}/feed",
+                    f"{parsed.scheme}://{parsed.netloc}/rss",
+                    f"{parsed.scheme}://{parsed.netloc}/podcast.xml",
+                    f"{parsed.scheme}://{parsed.netloc}/feed.xml",
+                ]
+                # Try the first one as fallback
+                rss_feed_url = possible_rss_urls[0]
+                logger.warning(f"RSS feed URL not in summary, using fallback: {rss_feed_url}")
             
             # Extract and save episode metadata XML if RSS feed URL is available
             if rss_feed_url:
@@ -541,28 +550,18 @@ def download_all_episodes(
                 pbar.write(f"  ⚠️  RSS feed URL not available, skipping metadata XML save")
             
             # Download podcast image once (if not already downloaded and URL available)
-            if not podcast_image_downloaded:
-                # Try to get podcast image URL from summary table
-                # We'll need to store it there when collecting data
-                try:
-                    cursor.execute("""
-                        SELECT podcast_image_url FROM summary WHERE name = ?
-                    """, (podcast_name,))
-                    result = cursor.fetchone()
-                    if result and result[0]:
-                        podcast_image_url = result[0]
-                        podcast_image_path = podcast_base_folder / "podcast_image"
-                        if _download_image(podcast_image_url, podcast_image_path):
-                            pbar.write(f"  🖼️  Podcast image downloaded: {podcast_image_path}")
-                            podcast_image_downloaded = True
-                        else:
-                            logger.warning(f"Failed to download podcast image from {podcast_image_url}")
-                            podcast_image_downloaded = True  # Mark as attempted
-                    else:
-                        podcast_image_downloaded = True  # No image URL available
-                except sqlite3.Error as e:
-                    logger.debug(f"Could not get podcast image URL from summary: {e}")
-                    podcast_image_downloaded = True  # Mark as attempted to avoid repeated checks
+            # Podcast image URL is already cached from function start, no need to query again
+            if not podcast_image_downloaded and podcast_image_url:
+                podcast_image_path = podcast_base_folder / "podcast_image"
+                if _download_image(podcast_image_url, podcast_image_path):
+                    pbar.write(f"  🖼️  Podcast image downloaded: {podcast_image_path}")
+                    podcast_image_downloaded = True
+                else:
+                    logger.warning(f"Failed to download podcast image from {podcast_image_url}")
+                    podcast_image_downloaded = True  # Mark as attempted
+            elif not podcast_image_url:
+                # No image URL available, mark as attempted to avoid repeated checks
+                podcast_image_downloaded = True
             
             # Collect status and download info updates for batch processing (no commit yet - batch transaction)
             try:
@@ -574,12 +573,11 @@ def download_all_episodes(
                 file_size = file_path.stat().st_size
                 file_name = file_path.name
                 pending_download_info_updates.append((file_path_str, file_size, file_name, episode_id))
-            except sqlite3.Error as db_error:
-                logger.error(f"Database error preparing update for episode {episode_id}: {db_error}")
+            except (sqlite3.Error, OSError) as db_error:
+                logger.error(f"Error preparing update for episode {episode_id}: {db_error}")
                 logger.debug(traceback.format_exc())
-                # Rollback and re-raise to handle at outer level
-                conn.rollback()
-                cursor.execute("BEGIN TRANSACTION")
+                # Use safe rollback if needed
+                safe_rollback(conn)
                 raise
             
             successful_downloads += 1
@@ -588,17 +586,14 @@ def download_all_episodes(
             # Commit batch if we've reached the batch size
             if len(pending_updates) >= batch_size:
                 try:
-                    _commit_batch_updates(conn, cursor, safe_table_name, pending_status_updates, pending_download_info_updates, len(pending_updates))
+                    _commit_batch_updates(conn, safe_table_name, pending_status_updates, pending_download_info_updates, len(pending_updates))
                     pending_updates = []
                     pending_status_updates = []
                     pending_download_info_updates = []
-                    # Begin new transaction
-                    cursor.execute("BEGIN TRANSACTION")
-                except sqlite3.Error as db_error:
+                except (TransactionError, sqlite3.Error) as db_error:
                     logger.error(f"Database error committing batch: {db_error}")
                     logger.debug(traceback.format_exc())
-                    conn.rollback()
-                    cursor.execute("BEGIN TRANSACTION")
+                    safe_rollback(conn)
                     pending_updates = []
                     pending_status_updates = []
                     pending_download_info_updates = []
@@ -613,13 +608,8 @@ def download_all_episodes(
             logger.error(f"Network error downloading episode '{episode_title}': {e}")
             logger.debug(traceback.format_exc())
             failed_downloads += 1
-            # Rollback current transaction on error, then begin new one
-            try:
-                conn.rollback()
-                cursor.execute("BEGIN TRANSACTION")
-            except sqlite3.Error as db_error:
-                logger.error(f"Database error during rollback: {db_error}")
-                logger.debug(traceback.format_exc())
+            # Use safe rollback for transaction cleanup
+            safe_rollback(conn)
             pending_updates = []
             pending_status_updates = []
             pending_download_info_updates = []
@@ -633,13 +623,8 @@ def download_all_episodes(
             logger.error(f"File system error downloading episode '{episode_title}': {e}")
             logger.debug(traceback.format_exc())
             failed_downloads += 1
-            # Rollback current transaction on error, then begin new one
-            try:
-                conn.rollback()
-                cursor.execute("BEGIN TRANSACTION")
-            except sqlite3.Error as db_error:
-                logger.error(f"Database error during rollback: {db_error}")
-                logger.debug(traceback.format_exc())
+            # Use safe rollback for transaction cleanup
+            safe_rollback(conn)
             pending_updates = []
             pending_status_updates = []
             pending_download_info_updates = []
@@ -653,13 +638,8 @@ def download_all_episodes(
             logger.error(f"Database error processing episode '{episode_title}': {e}")
             logger.debug(traceback.format_exc())
             failed_downloads += 1
-            # Rollback current transaction on error, then begin new one
-            try:
-                conn.rollback()
-                cursor.execute("BEGIN TRANSACTION")
-            except sqlite3.Error as db_error:
-                logger.error(f"Database error during rollback: {db_error}")
-                logger.debug(traceback.format_exc())
+            # Use safe rollback for transaction cleanup
+            safe_rollback(conn)
             pending_updates = []
             pending_status_updates = []
             pending_download_info_updates = []
@@ -673,7 +653,11 @@ def download_all_episodes(
     
     # Commit any remaining pending updates
     if pending_updates:
-        _commit_batch_updates(conn, cursor, safe_table_name, pending_status_updates, pending_download_info_updates, len(pending_updates))
+        try:
+            _commit_batch_updates(conn, safe_table_name, pending_status_updates, pending_download_info_updates, len(pending_updates))
+        except (TransactionError, sqlite3.Error) as e:
+            logger.error(f"Error committing final batch: {e}")
+            safe_rollback(conn)
     
     print(f"\n{'='*60}")
     print(f"Download complete for '{podcast_name}':")
@@ -768,15 +752,21 @@ def download_last_episode(
                 print(f"  🏷️  ID3 tags updated")
         except Exception as e:
             logger.debug(f"Error updating ID3 tags for existing file: {e}")
-        # Use executemany() for consistency (even though it's just one update)
-        cursor.executemany(
-            f"UPDATE {safe_table_name} SET status = ? WHERE id = ?",
-            [(EPISODE_STATUS_DOWNLOADED, episode_id)]
-        )
-        conn.commit()
-        update_download_info(conn, podcast_name, episode_id, file_path)
-        update_summary(conn, podcast_name)
-        return True
+        # Use transaction context manager for safe transaction handling
+        try:
+            with transaction(conn, autocommit=True) as cursor:
+                cursor.executemany(
+                    f"UPDATE {safe_table_name} SET status = ? WHERE id = ?",
+                    [(EPISODE_STATUS_DOWNLOADED, episode_id)]
+                )
+            
+            update_download_info(conn, podcast_name, episode_id, file_path)
+            update_summary(conn, podcast_name)
+            return True
+        except (TransactionError, sqlite3.Error) as e:
+            logger.error(f"Database error updating existing episode: {e}")
+            safe_rollback(conn)
+            return False
     
     try:
         print(f"Downloading: {episode_title}")
@@ -792,18 +782,21 @@ def download_last_episode(
             logger.debug(traceback.format_exc())
         
         try:
-            # Use executemany() for consistency (even though it's just one update)
-            cursor.executemany(
-                f"UPDATE {safe_table_name} SET status = ? WHERE id = ?",
-                [(EPISODE_STATUS_DOWNLOADED, episode_id)]
-            )
-            conn.commit()
+            # Use transaction context manager for safe transaction handling
+            with transaction(conn, autocommit=True) as cursor:
+                # Use executemany() for consistency (even though it's just one update)
+                cursor.executemany(
+                    f"UPDATE {safe_table_name} SET status = ? WHERE id = ?",
+                    [(EPISODE_STATUS_DOWNLOADED, episode_id)]
+                )
+            
+            # Update download info and summary (these may have their own transactions)
             update_download_info(conn, podcast_name, episode_id, file_path)
             update_summary(conn, podcast_name)
-        except sqlite3.Error as db_error:
+        except (TransactionError, sqlite3.Error) as db_error:
             logger.error(f"Database error updating episode {episode_id}: {db_error}")
             logger.debug(traceback.format_exc())
-            conn.rollback()
+            safe_rollback(conn)
             return False
             
         return True
@@ -824,10 +817,7 @@ def download_last_episode(
         print(f"Database error: {e}")
         logger.error(f"Database error processing episode '{episode_title}': {e}")
         logger.debug(traceback.format_exc())
-        try:
-            conn.rollback()
-        except sqlite3.Error:
-            pass
+        safe_rollback(conn)
         return False
 
 
