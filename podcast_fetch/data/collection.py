@@ -11,26 +11,90 @@ import json
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse, parse_qs
 from typing import Tuple, Dict, Optional
+from datetime import datetime, timedelta
 import pandas as pd
 import feedparser
 from podcast_fetch import config
+from podcast_fetch.config import EPISODE_STATUS_NOT_DOWNLOADED
+from podcast_fetch.validation import validate_feed_url
 
 # Set up logging
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(getattr(logging, config.LOG_LEVEL, logging.INFO))
+from podcast_fetch.logging_config import setup_logging
+logger = setup_logging(__name__)
+
+# RSS Feed Cache
+# Structure: {rss_url: (content_bytes, timestamp)}
+_rss_cache: Dict[str, Tuple[bytes, datetime]] = {}
+_rss_cache_ttl = timedelta(hours=1)  # Cache for 1 hour
+
+
+def get_cached_rss_content(rss_url: str) -> Optional[bytes]:
+    """
+    Get RSS feed content from cache or download if not cached or expired.
     
-    # Add file handler if configured
-    if config.LOG_FILE:
-        file_handler = logging.FileHandler(config.LOG_FILE)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+    This function implements a simple in-memory cache with TTL (time-to-live)
+    to avoid redundant RSS feed downloads. The cache is shared across all
+    functions that need RSS feed content.
+    
+    Parameters:
+    rss_url: URL of the RSS feed
+    
+    Returns:
+    bytes: RSS feed content, or None if download fails
+    
+    Example:
+        >>> content = get_cached_rss_content("https://feeds.example.com/podcast.rss")
+        >>> # First call downloads and caches
+        >>> content = get_cached_rss_content("https://feeds.example.com/podcast.rss")
+        >>> # Second call uses cache (if within TTL)
+    """
+    # Validate URL
+    is_valid, error = validate_feed_url(rss_url)
+    if not is_valid:
+        logger.error(f"Invalid RSS feed URL '{rss_url}': {error}")
+        return None
+    
+    current_time = datetime.now()
+    
+    # Check if we have a valid cached version
+    if rss_url in _rss_cache:
+        content, timestamp = _rss_cache[rss_url]
+        if current_time - timestamp < _rss_cache_ttl:
+            logger.debug(f"Using cached RSS feed: {rss_url} (age: {current_time - timestamp})")
+            return content
+        else:
+            # Cache expired, remove it
+            logger.debug(f"RSS cache expired for {rss_url}, will re-download")
+            del _rss_cache[rss_url]
+    
+    # Download and cache
+    try:
+        logger.debug(f"Downloading RSS feed: {rss_url}")
+        response = requests.get(rss_url, timeout=config.DOWNLOAD_TIMEOUT)
+        response.raise_for_status()
+        content = response.content
+        
+        # Cache the content
+        _rss_cache[rss_url] = (content, current_time)
+        logger.info(f"Cached RSS feed: {rss_url} ({len(content):,} bytes)")
+        
+        return content
+    except requests.RequestException as e:
+        logger.error(f"Failed to download RSS feed {rss_url}: {e}")
+        logger.debug(traceback.format_exc())
+        return None
+
+
+def clear_rss_cache():
+    """
+    Clear the RSS feed cache.
+    
+    Useful for testing or forcing fresh downloads.
+    """
+    global _rss_cache
+    cache_size = len(_rss_cache)
+    _rss_cache.clear()
+    logger.debug(f"RSS feed cache cleared ({cache_size} entries)")
 
 
 def get_podcast_title(rss_url: str) -> str:
@@ -49,9 +113,20 @@ def get_podcast_title(rss_url: str) -> str:
         >>> print(title)
         "Example Podcast"
     """
+    # Validate URL
+    is_valid, error = validate_feed_url(rss_url)
+    if not is_valid:
+        logger.warning(f"Invalid RSS feed URL '{rss_url}': {error}")
+        return "Unknown Podcast"
+    
     try:
+        # Get RSS feed content from cache or download
+        rss_content = get_cached_rss_content(rss_url)
+        if not rss_content:
+            return "Unknown Podcast"
+        
         # Parse the feed to get the title
-        feed = feedparser.parse(rss_url)
+        feed = feedparser.parse(rss_content)
         
         # Try to get the title from various locations
         if hasattr(feed, 'channel') and hasattr(feed.channel, 'title'):
@@ -309,6 +384,10 @@ def normalize_feed_url(feed_url: str) -> str:
         logger.info(f"Detected Apple Podcast URL, converting to RSS feed: {feed_url}")
         try:
             rss_url = get_rss_from_apple_podcast(feed_url)
+            # Validate the converted RSS URL
+            is_valid, error = validate_feed_url(rss_url)
+            if not is_valid:
+                raise ValueError(f"Converted RSS feed URL is invalid: {error}")
             logger.info(f"Successfully converted Apple Podcast link to RSS feed")
             return rss_url
         except Exception as e:
@@ -323,6 +402,11 @@ def normalize_feed_url(feed_url: str) -> str:
         logger.debug(f"URL appears to be an RSS feed already: {feed_url}")
     else:
         logger.debug(f"URL does not match common RSS patterns, using as-is: {feed_url}")
+    
+    # Validate the RSS feed URL before returning
+    is_valid, error = validate_feed_url(feed_url)
+    if not is_valid:
+        raise ValueError(f"Invalid RSS feed URL: {error}")
     
     # Already an RSS feed URL (or assumed to be), return as-is
     return feed_url
@@ -377,13 +461,21 @@ def get_episode_xml_from_rss(rss_url: str, episode_id: str, episode_title: str =
         >>> print(xml)
         "<item>...</item>"
     """
+    # Validate URL
+    is_valid, error = validate_feed_url(rss_url)
+    if not is_valid:
+        logger.error(f"Invalid RSS feed URL '{rss_url}': {error}")
+        return None
+    
     try:
-        # Download the RSS feed as XML
-        response = requests.get(rss_url, timeout=config.DOWNLOAD_TIMEOUT)
-        response.raise_for_status()
+        # Get RSS feed content from cache or download
+        rss_content = get_cached_rss_content(rss_url)
+        if not rss_content:
+            logger.warning(f"Could not retrieve RSS feed content from {rss_url}")
+            return None
         
         # Parse the XML
-        root = ET.fromstring(response.content)
+        root = ET.fromstring(rss_content)
         
         # Handle namespaces (RSS feeds often use namespaces)
         namespaces = {
@@ -481,8 +573,24 @@ def collect_data(feed):
     # Store the original feed URL for later metadata extraction
     feed_url = feed if isinstance(feed, str) else None
     
-    # Parse the feed
-    feed = feedparser.parse(feed)
+    # Use cached RSS content if feed is a URL string
+    if isinstance(feed, str) and (feed.startswith('http://') or feed.startswith('https://')):
+        # Validate URL before processing
+        is_valid, error = validate_feed_url(feed)
+        if not is_valid:
+            logger.error(f"Invalid feed URL '{feed}': {error}")
+            return pd.DataFrame()
+        
+        rss_content = get_cached_rss_content(feed)
+        if rss_content:
+            # Parse from cached content
+            feed = feedparser.parse(rss_content)
+        else:
+            # Fallback to direct parsing if cache fails
+            feed = feedparser.parse(feed)
+    else:
+        # Parse the feed (file path or other)
+        feed = feedparser.parse(feed)
     
     # Check if feed parsing was successful
     if feed.bozo and feed.bozo_exception:
@@ -567,7 +675,7 @@ def collect_data(feed):
         df = pd.DataFrame(columns=['title', 'link', 'published', 'summary', 'id', 'link_direct', 
                                    'published_parsed', 'status', 'author', 'author_raw', 'episode_number', 
                                    'season_number', 'Saved_Path', 'Size', 'File_name'])
-        df['status'] = 'not downloaded'
+        df['status'] = EPISODE_STATUS_NOT_DOWNLOADED
         df['author'] = title
         df['author_raw'] = author_raw
         df['episode_number'] = None
@@ -702,7 +810,7 @@ def collect_data(feed):
     # Create a dataframe from the cleaned entries
     df = pd.DataFrame(entries_data)
     # Add status and author columns
-    df['status'] = 'not downloaded'
+    df['status'] = EPISODE_STATUS_NOT_DOWNLOADED
     df['author'] = title  # Normalized name
     df['author_raw'] = author_raw  # Original name before normalization
     

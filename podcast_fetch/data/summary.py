@@ -3,6 +3,7 @@ Summary generation functions for podcast statistics.
 """
 
 import pandas as pd
+from podcast_fetch.config import EPISODE_STATUS_DOWNLOADED
 
 
 def summarise_podcasts(df):
@@ -35,7 +36,7 @@ def summarise_podcasts(df):
         num_episodes = len(podcast_df)
         
         # Get the number of episodes downloaded
-        num_episodes_downloaded = len(podcast_df[podcast_df['status'] == 'downloaded'])
+        num_episodes_downloaded = len(podcast_df[podcast_df['status'] == EPISODE_STATUS_DOWNLOADED])
         
         # Get the number of episodes not downloaded
         num_episodes_not_downloaded = num_episodes - num_episodes_downloaded
@@ -44,7 +45,7 @@ def summarise_podcasts(df):
         pct_downloaded = (num_episodes_downloaded / num_episodes * 100) if num_episodes > 0 else 0
         
         # Get the date of the last episode downloaded
-        downloaded_episodes = podcast_df[podcast_df['status'] == 'downloaded']
+        downloaded_episodes = podcast_df[podcast_df['status'] == EPISODE_STATUS_DOWNLOADED]
         if len(downloaded_episodes) > 0:
             # Try to get published date - handle both 'published' and 'published_parsed' formats
             if 'published' in downloaded_episodes.columns:

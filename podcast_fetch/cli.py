@@ -27,10 +27,22 @@ from podcast_fetch import (
     add_indexes_to_table,
 )
 from podcast_fetch.database.schema import create_summary_table_if_not_exists
+from podcast_fetch.validation import (
+    validate_feed_url,
+    validate_podcast_name,
+    validate_file_path,
+    ValidationError
+)
 
 
 def process_feeds_file(feeds_file='feeds.txt'):
     """Process all feeds from feeds.txt file."""
+    # Validate file path
+    is_valid, error = validate_file_path(feeds_file)
+    if not is_valid:
+        print(f"❌ Error: Invalid file path '{feeds_file}': {error}")
+        return False
+    
     feeds_path = Path(feeds_file)
     
     if not feeds_path.exists():
@@ -71,6 +83,13 @@ def process_feeds_file(feeds_file='feeds.txt'):
             print(f"{'='*60}")
             
             try:
+                # Validate feed URL
+                is_valid, error = validate_feed_url(feed_url)
+                if not is_valid:
+                    print(f"⚠️  Invalid feed URL: {error}")
+                    print(f"   Skipping feed: {feed_url}\n")
+                    continue
+                
                 # Normalize feed URL (handle Apple Podcast links)
                 normalized_url = normalize_feed_url(feed_url)
                 
@@ -84,6 +103,15 @@ def process_feeds_file(feeds_file='feeds.txt'):
                 
                 # Get podcast title
                 title = df['author'].iloc[0] if len(df) > 0 else 'unknown'
+                
+                # Validate podcast name
+                is_valid, error = validate_podcast_name(title)
+                if not is_valid:
+                    print(f"⚠️  Invalid podcast name '{title}': {error}")
+                    print(f"   Using sanitized name...")
+                    from podcast_fetch.validation import sanitize_podcast_name
+                    title = sanitize_podcast_name(title)
+                
                 print(f"📻 Podcast: {title}")
                 print(f"📊 Episodes found: {len(df)}")
                 
@@ -192,6 +220,12 @@ def show_status(podcast_name=None):
     with get_db_connection(db_path) as conn:
         try:
             if podcast_name:
+                # Validate podcast name
+                is_valid, error = validate_podcast_name(podcast_name)
+                if not is_valid:
+                    print(f"❌ Invalid podcast name '{podcast_name}': {error}")
+                    return False
+                
                 # Show status for specific podcast
                 if not table_exists(conn, podcast_name):
                     print(f"❌ Podcast '{podcast_name}' not found in database.")
@@ -231,6 +265,12 @@ def show_status(podcast_name=None):
 
 def download_episodes(podcast_name, last_only=False):
     """Download episodes for a podcast."""
+    # Validate podcast name
+    is_valid, error = validate_podcast_name(podcast_name)
+    if not is_valid:
+        print(f"❌ Invalid podcast name '{podcast_name}': {error}")
+        return False
+    
     db_path = config.DB_PATH
     
     if not os.path.exists(db_path):
@@ -269,6 +309,12 @@ def download_episodes(podcast_name, last_only=False):
 
 def add_feed(feed_url):
     """Add a single feed to feeds.txt and process it."""
+    # Validate feed URL
+    is_valid, error = validate_feed_url(feed_url)
+    if not is_valid:
+        print(f"❌ Invalid feed URL: {error}")
+        return False
+    
     feeds_path = Path('feeds.txt')
     
     # Check if feed already exists
@@ -337,6 +383,11 @@ Examples:
     
     try:
         if args.command == 'process-feeds':
+            # Validate file path argument
+            is_valid, error = validate_file_path(args.file)
+            if not is_valid:
+                print(f"❌ Invalid file path '{args.file}': {error}")
+                return 1
             success = process_feeds_file(args.file)
         elif args.command == 'list':
             success = list_podcasts()

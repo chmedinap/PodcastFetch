@@ -21,7 +21,9 @@ from podcast_fetch.data.collection import (
     normalize_feed_url,
     get_podcast_title,
     get_apple_podcast_info,
-    get_episode_xml_from_rss
+    get_episode_xml_from_rss,
+    get_cached_rss_content,
+    clear_rss_cache
 )
 from podcast_fetch.data.summary import summarise_podcasts
 
@@ -58,6 +60,15 @@ from podcast_fetch.download.downloader import download_all_episodes, download_la
 from podcast_fetch.download.metadata import update_summary
 from podcast_fetch.download.id3_tags import update_mp3_id3_tags, update_episode_id3_tags_from_db
 
+# Import validation modules
+from podcast_fetch.validation import (
+    validate_feed_url,
+    validate_podcast_name,
+    validate_file_path,
+    sanitize_podcast_name,
+    ValidationError
+)
+
 __all__ = [
     # Config
     'config',
@@ -70,6 +81,8 @@ __all__ = [
     'get_podcast_title',
     'get_apple_podcast_info',
     'get_episode_xml_from_rss',
+    'get_cached_rss_content',
+    'clear_rss_cache',
     # Database functions
     'is_valid_database',
     'get_db_connection',
@@ -99,5 +112,11 @@ __all__ = [
     'update_summary',
     'update_mp3_id3_tags',
     'update_episode_id3_tags_from_db',
+    # Validation functions
+    'validate_feed_url',
+    'validate_podcast_name',
+    'validate_file_path',
+    'sanitize_podcast_name',
+    'ValidationError',
 ]
 

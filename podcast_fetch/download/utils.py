@@ -9,23 +9,11 @@ import pandas as pd
 from typing import List, Dict
 from podcast_fetch.database.queries import table_exists, validate_and_quote_table_name
 from podcast_fetch import config
+from podcast_fetch.config import EPISODE_STATUS_NOT_DOWNLOADED
 
 # Set up logging
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(getattr(logging, config.LOG_LEVEL, logging.INFO))
-    
-    # Add file handler if configured
-    if config.LOG_FILE:
-        file_handler = logging.FileHandler(config.LOG_FILE)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+from podcast_fetch.logging_config import setup_logging
+logger = setup_logging(__name__)
 
 
 def sanitize_filename(filename: str) -> str:
@@ -80,8 +68,8 @@ def show_podcast_summary(conn: sqlite3.Connection, podcast_names: List[str]) -> 
             cursor.execute(f"""
                 SELECT COUNT(*) 
                 FROM {safe_table_name} 
-                WHERE status = 'not downloaded'
-            """)
+                WHERE status = ?
+            """, (EPISODE_STATUS_NOT_DOWNLOADED,))
             count = cursor.fetchone()[0]
             summary[podcast_name] = count
             total_episodes += count

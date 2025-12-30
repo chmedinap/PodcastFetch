@@ -27,6 +27,13 @@ LOG_FILE = None  # Set to a file path to enable file logging, None for console o
 MAX_FILENAME_LENGTH = 200
 FEEDS_FILE = 'feeds.txt'
 
+# Episode Status Constants
+EPISODE_STATUS_NOT_DOWNLOADED = 'not downloaded'
+EPISODE_STATUS_DOWNLOADED = 'downloaded'
+
+# Database Table Names
+SUMMARY_TABLE_NAME = 'summary'
+
 # Plotting Configuration
 PLOTTING_STYLE = 'seaborn-v0_8'
 SEABORN_PALETTE = "husl"

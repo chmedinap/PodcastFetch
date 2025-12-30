@@ -9,23 +9,11 @@ import pandas as pd
 from podcast_fetch.database.queries import table_exists, summary_exists, validate_and_quote_table_name
 from podcast_fetch.database.schema import create_summary_table_if_not_exists
 from podcast_fetch import config
+from podcast_fetch.config import EPISODE_STATUS_DOWNLOADED, EPISODE_STATUS_NOT_DOWNLOADED
 
 # Set up logging
-logger = logging.getLogger(__name__)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(getattr(logging, config.LOG_LEVEL, logging.INFO))
-    
-    # Add file handler if configured
-    if config.LOG_FILE:
-        file_handler = logging.FileHandler(config.LOG_FILE)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+from podcast_fetch.logging_config import setup_logging
+logger = setup_logging(__name__)
 
 
 def update_summary(conn: sqlite3.Connection, podcast_name: str, podcast_image_url: str = None, rss_feed_url: str = None) -> None:
@@ -52,10 +40,10 @@ def update_summary(conn: sqlite3.Connection, podcast_name: str, podcast_image_ur
         cursor.execute(f"""
             SELECT 
                 COUNT(*) as num_episodes,
-                SUM(CASE WHEN status = 'downloaded' THEN 1 ELSE 0 END) as num_episodes_downloaded,
-                SUM(CASE WHEN status = 'not downloaded' THEN 1 ELSE 0 END) as num_episodes_not_downloaded
+                SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as num_episodes_downloaded,
+                SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as num_episodes_not_downloaded
             FROM {safe_table_name}
-        """)
+        """, (EPISODE_STATUS_DOWNLOADED, EPISODE_STATUS_NOT_DOWNLOADED))
         
         stats = cursor.fetchone()
         num_episodes, num_episodes_downloaded, num_episodes_not_downloaded = stats
@@ -73,10 +61,10 @@ def update_summary(conn: sqlite3.Connection, podcast_name: str, podcast_image_ur
         cursor.execute(f"""
             SELECT published, published_parsed
             FROM {safe_table_name}
-            WHERE status = 'downloaded'
+            WHERE status = ?
             ORDER BY published DESC
             LIMIT 1
-        """)
+        """, (EPISODE_STATUS_DOWNLOADED,))
         
         last_downloaded_result = cursor.fetchone()
         last_downloaded_date = None

@@ -42,7 +42,7 @@
 
 ## 2. Critical Issues
 
-### 2.1 SQL Injection Risk (Partially Mitigated)
+### 2.1 SQL Injection Risk ✅ FIXED
 
 **Location:** Multiple files, particularly `downloader.py` and `metadata.py`
 
@@ -55,10 +55,34 @@ cursor.execute(f"SELECT * FROM {podcast_name} WHERE ...")
 
 **Impact:** HIGH - Database corruption or data loss
 
-**Recommendation:**
-- Use parameterized queries with table name validation
-- Create a whitelist validation function
-- Consider using SQLite's `quote_identifier()` or similar
+**Status:** ✅ **RESOLVED** - Fixed on 2025-12-30
+
+**Solution Implemented:**
+- Created `validate_and_quote_table_name()` function in `database/queries.py`
+- Validates table names contain only safe characters (lowercase letters, numbers, underscores)
+- Raises `ValueError` for invalid table names
+- Quotes table names with double quotes for SQLite safety
+- Updated all SQL queries across the codebase to use validated, quoted table names:
+  - `database/queries.py` (2 queries)
+  - `database/schema.py` (10+ queries)
+  - `download/metadata.py` (2 queries)
+  - `download/downloader.py` (5 queries)
+  - `download/utils.py` (2 queries)
+  - `download/id3_tags.py` (1 query)
+
+**Before:**
+```python
+cursor.execute(f"SELECT * FROM {podcast_name} WHERE ...")  # Vulnerable
+```
+
+**After:**
+```python
+safe_table_name = validate_and_quote_table_name(podcast_name)
+cursor.execute(f"SELECT * FROM {safe_table_name} WHERE ...")  # Safe
+```
+
+**Remaining Recommendation:**
+- Consider adding table name whitelist validation against existing tables for additional safety
 
 ### 2.2 Memory Consumption with Large Feeds
 
@@ -745,14 +769,13 @@ for episode in tqdm(episodes, desc="Downloading"):
 
 **Risk:** Limited security measures:
 
-- **SQL Injection:** Partially mitigated but not fully protected
+- **SQL Injection:** ✅ Fixed - All table names are now validated and quoted
 - **Path Traversal:** File path sanitization may have edge cases
 - **Remote Code Execution:** No sandboxing for RSS parsing
 - **Credential Storage:** No sensitive data currently, but no framework for future
 
 **Mitigation:**
-- Implement comprehensive input validation
-- Use parameterized queries everywhere
+- ✅ Implemented: Table name validation and quoting for SQL injection protection
 - Add path traversal protection
 - Consider sandboxing for untrusted RSS feeds
 - Plan for secure credential storage if needed
@@ -792,7 +815,7 @@ for episode in tqdm(episodes, desc="Downloading"):
 - Limited scalability
 
 **Priority Actions:**
-1. **Immediate:** Fix SQL injection risks, add RSS caching
+1. **Immediate:** ✅ SQL injection risks fixed, add RSS caching
 2. **Short-term:** Implement parallel downloads, optimize memory usage
 3. **Medium-term:** Refactor for better separation of concerns, add tests
 4. **Long-term:** Consider async architecture, database migration for scale
@@ -800,6 +823,405 @@ for episode in tqdm(episodes, desc="Downloading"):
 **Estimated Effort for Critical Fixes:** 2-3 days  
 **Estimated Effort for Performance Improvements:** 1-2 weeks  
 **Estimated Effort for Full Refactoring:** 3-4 weeks
+
+---
+
+## 8. Implementation Order Proposal
+
+This section provides a recommended order for implementing the fixes and improvements identified in this review. The order prioritizes:
+1. **Foundation first** - Fixes that enable other improvements
+2. **Risk mitigation** - Critical security and stability issues
+3. **Quick wins** - Low effort, high impact changes
+4. **Performance** - Optimizations that improve user experience
+5. **Architecture** - Structural improvements for long-term maintainability
+
+### Phase 1: Foundation & Quick Wins (Week 1)
+**Goal:** Establish solid foundation and get immediate improvements with minimal effort.
+
+#### 1.1 Extract Magic Strings to Constants (30 min)
+- **Priority:** HIGH (enables other fixes)
+- **Files:** `config.py`, all modules using magic strings
+- **Why First:** Other fixes will reference these constants
+- **Dependencies:** None
+- **Risk:** Low
+
+#### 1.2 Centralize Logging Setup (15 min)
+- **Priority:** HIGH (cleanup, enables better debugging)
+- **Files:** Create `podcast_fetch/logging_config.py`, update all modules
+- **Why Early:** Makes debugging subsequent changes easier
+- **Dependencies:** None
+- **Risk:** Low
+
+#### 1.3 Add RSS Feed Caching (30 min)
+- **Priority:** HIGH (quick win, high impact)
+- **Files:** `data/collection.py`, `download/downloader.py`
+- **Why Early:** Immediate performance improvement, enables other optimizations
+- **Dependencies:** None
+- **Risk:** Low
+
+#### 1.4 Add Input Validation (1 hour)
+- **Priority:** HIGH (security, stability)
+- **Files:** `cli.py`, `data/collection.py`
+- **Why Early:** Prevents errors before they happen
+- **Dependencies:** Constants from 1.1
+- **Risk:** Low
+
+#### 1.5 Use `executemany()` for Batch Updates (30 min)
+- **Priority:** MEDIUM (performance improvement)
+- **Files:** `download/downloader.py`
+- **Why Early:** Simple change, immediate benefit
+- **Dependencies:** None
+- **Risk:** Low
+
+#### 1.6 Add Progress Bar (15 min)
+- **Priority:** MEDIUM (user experience)
+- **Files:** `download/downloader.py`
+- **Why Early:** Improves user experience immediately
+- **Dependencies:** None
+- **Risk:** Low
+
+**Phase 1 Total Time:** ~3.5 hours  
+**Phase 1 Impact:** Better code quality, immediate performance gains, improved UX
+
+---
+
+### Phase 2: Critical Performance Fixes (Week 2)
+**Goal:** Address high-impact performance issues that affect scalability.
+
+#### 2.1 Optimize DataFrame Operations (4-6 hours)
+- **Priority:** CRITICAL (memory issue)
+- **Files:** `data/collection.py`, `cli.py`
+- **Why Now:** Foundation for handling large feeds
+- **Dependencies:** Constants from Phase 1.1
+- **Risk:** Medium (requires testing with large feeds)
+- **Approach:**
+  1. Implement chunking logic
+  2. Change `if_exists='replace'` to `'append'` with deduplication
+  3. Test with large feeds (1000+ episodes)
+  4. Monitor memory usage
+
+#### 2.2 Cache RSS Feed Content (Enhanced) (2 hours)
+- **Priority:** HIGH (network efficiency)
+- **Files:** `data/collection.py`, `download/downloader.py`
+- **Why Now:** Builds on Phase 1.3, adds TTL and better management
+- **Dependencies:** Phase 1.3 (basic caching)
+- **Risk:** Low
+- **Enhancements:**
+  - Add TTL (time-to-live) for cache entries
+  - Add cache size limits
+  - Add cache invalidation logic
+
+#### 2.3 Fix Redundant Database Queries (1 hour)
+- **Priority:** MEDIUM (performance)
+- **Files:** `download/downloader.py`
+- **Why Now:** Simple optimization, builds on Phase 1
+- **Dependencies:** None
+- **Risk:** Low
+
+#### 2.4 Optimize Date Parsing (2-3 hours)
+- **Priority:** MEDIUM (performance)
+- **Files:** `download/utils.py`, `data/collection.py`
+- **Why Now:** Reduces unnecessary DB queries
+- **Dependencies:** None
+- **Risk:** Low
+- **Approach:**
+  1. Parse dates once during feed processing
+  2. Store parsed dates in database
+  3. Remove redundant parsing in `parse_episode_date()`
+
+**Phase 2 Total Time:** ~9-12 hours  
+**Phase 2 Impact:** Significant memory and network efficiency improvements
+
+---
+
+### Phase 3: Transaction & Data Integrity (Week 3)
+**Goal:** Improve reliability and data consistency.
+
+#### 3.1 Improve Transaction Management (4-6 hours)
+- **Priority:** HIGH (data integrity)
+- **Files:** `download/downloader.py`
+- **Why Now:** Critical for reliability
+- **Dependencies:** Constants from Phase 1.1
+- **Risk:** Medium (requires careful testing)
+- **Approach:**
+  1. Create transaction context manager
+  2. Implement savepoints for partial rollback
+  3. Add transaction state validation
+  4. Test with failure scenarios
+
+#### 3.2 Add Resume Capability for Downloads (6-8 hours)
+- **Priority:** HIGH (user experience, bandwidth)
+- **Files:** `download/downloader.py`
+- **Why Now:** Major UX improvement
+- **Dependencies:** None
+- **Risk:** Medium (requires HTTP Range support)
+- **Approach:**
+  1. Implement HTTP Range request support
+  2. Store partial downloads with `.part` extension
+  3. Add resume logic on restart
+  4. Add progress tracking
+
+#### 3.3 Add Data Integrity Checks (3-4 hours)
+- **Priority:** MEDIUM (reliability)
+- **Files:** `download/downloader.py`, new `utils/validation.py`
+- **Why Now:** Ensures data consistency
+- **Dependencies:** None
+- **Risk:** Low
+- **Features:**
+  - File checksum verification (MD5/SHA256)
+  - Database backup mechanism
+  - Metadata validation
+
+**Phase 3 Total Time:** ~13-18 hours  
+**Phase 3 Impact:** Much better reliability and user experience
+
+---
+
+### Phase 4: Concurrency & Scalability (Week 4)
+**Goal:** Enable parallel processing and improve throughput.
+
+#### 4.1 Parallelize RSS Feed Processing (4-6 hours)
+- **Priority:** HIGH (performance)
+- **Files:** `cli.py`, `data/collection.py`
+- **Why Now:** Foundation for concurrency
+- **Dependencies:** Transaction improvements from Phase 3
+- **Risk:** Medium (requires thread safety)
+- **Approach:**
+  1. Implement ThreadPoolExecutor for feed processing
+  2. Add thread-safe database access
+  3. Test with multiple feeds simultaneously
+  4. Monitor for race conditions
+
+#### 4.2 Implement Download Queue with Concurrency (8-10 hours)
+- **Priority:** HIGH (performance)
+- **Files:** `download/downloader.py`
+- **Why Now:** Major performance improvement
+- **Dependencies:** Transaction management from Phase 3, resume capability
+- **Risk:** Medium-High (complex, requires careful testing)
+- **Approach:**
+  1. Implement ThreadPoolExecutor for downloads
+  2. Add rate limiting instead of fixed delays
+  3. Implement download queue
+  4. Add concurrency control (max workers)
+  5. Test with various scenarios
+
+#### 4.3 Implement Connection Pooling (3-4 hours)
+- **Priority:** MEDIUM (performance)
+- **Files:** `database/connection.py`
+- **Why Now:** Supports concurrent operations
+- **Dependencies:** Phase 4.1, 4.2 (concurrency)
+- **Risk:** Medium (SQLite concurrency limitations)
+- **Approach:**
+  1. Create simple connection pool
+  2. Add thread-local connections
+  3. Test with concurrent operations
+
+**Phase 4 Total Time:** ~15-20 hours  
+**Phase 4 Impact:** 3-5x performance improvement for multi-feed/multi-episode operations
+
+---
+
+### Phase 5: Code Quality & Architecture (Week 5-6)
+**Goal:** Improve maintainability and prepare for future growth.
+
+#### 5.1 Add Type Hints (4-6 hours)
+- **Priority:** MEDIUM (developer experience)
+- **Files:** All public functions
+- **Why Now:** Improves code quality before refactoring
+- **Dependencies:** None
+- **Risk:** Low
+- **Approach:**
+  1. Add type hints to `__init__.py` exports
+  2. Add type hints to CLI functions
+  3. Add type hints to core functions
+  4. Run `mypy` for validation
+
+#### 5.2 Extract Constants and Enums (2 hours)
+- **Priority:** MEDIUM (code quality)
+- **Files:** Create `constants.py`, update all modules
+- **Why Now:** Completes Phase 1.1, enables better refactoring
+- **Dependencies:** Phase 1.1 (magic strings)
+- **Risk:** Low
+
+#### 5.3 Create Repository Pattern (6-8 hours)
+- **Priority:** MEDIUM (architecture)
+- **Files:** Create `database/repository.py`, refactor queries
+- **Why Now:** Improves testability and maintainability
+- **Dependencies:** Type hints from 5.1
+- **Risk:** Medium (significant refactoring)
+- **Approach:**
+  1. Create `PodcastRepository` class
+  2. Move all database queries to repository
+  3. Update all callers
+  4. Add unit tests
+
+#### 5.4 Separate Business Logic from CLI (6-8 hours)
+- **Priority:** MEDIUM (architecture)
+- **Files:** Create `core/` module, refactor `cli.py`
+- **Why Now:** Enables better testing and reuse
+- **Dependencies:** Repository pattern from 5.3
+- **Risk:** Medium (significant refactoring)
+- **Approach:**
+  1. Create `core/` directory structure
+  2. Extract business logic from CLI
+  3. Update CLI to call core functions
+  4. Add integration tests
+
+#### 5.5 Implement Service Layer (8-10 hours)
+- **Priority:** LOW-MEDIUM (architecture)
+- **Files:** Create `services/` module
+- **Why Now:** Completes architectural improvements
+- **Dependencies:** Repository pattern (5.3), core separation (5.4)
+- **Risk:** Medium (major refactoring)
+- **Approach:**
+  1. Create service classes
+  2. Move orchestration logic to services
+  3. Update CLI to use services
+  4. Add comprehensive tests
+
+#### 5.6 Extract Configuration to Environment Variables (2-3 hours)
+- **Priority:** LOW (flexibility)
+- **Files:** `config.py`
+- **Why Now:** Improves deployment flexibility
+- **Dependencies:** None
+- **Risk:** Low
+- **Approach:**
+  1. Add `python-dotenv` dependency
+  2. Update `config.py` to read from environment
+  3. Create `.env.example` file
+  4. Document configuration options
+
+#### 5.7 Standardize Error Handling (4-6 hours)
+- **Priority:** MEDIUM (code quality)
+- **Files:** Create `exceptions.py`, update error handling
+- **Why Now:** Improves consistency
+- **Dependencies:** None
+- **Risk:** Low
+- **Approach:**
+  1. Define custom exception hierarchy
+  2. Update functions to use consistent patterns
+  3. Update error handling throughout
+
+**Phase 5 Total Time:** ~32-43 hours  
+**Phase 5 Impact:** Much better code quality, maintainability, and testability
+
+---
+
+### Phase 6: Testing & Documentation (Week 7)
+**Goal:** Ensure reliability and maintainability.
+
+#### 6.1 Implement Test Suite (16-20 hours)
+- **Priority:** HIGH (quality assurance)
+- **Files:** Create `tests/` directory
+- **Why Now:** Essential before further changes
+- **Dependencies:** All previous phases
+- **Risk:** Low
+- **Coverage:**
+  - Unit tests for core functions
+  - Integration tests for workflows
+  - Mock external dependencies (network, file system)
+  - Test error scenarios
+
+#### 6.2 Add CI/CD Pipeline (4-6 hours)
+- **Priority:** MEDIUM (automation)
+- **Files:** Create `.github/workflows/` or similar
+- **Why Now:** Automates testing and deployment
+- **Dependencies:** Test suite from 6.1
+- **Risk:** Low
+- **Features:**
+  - Automated testing on commits
+  - Code quality checks (linting, type checking)
+  - Automated releases
+
+#### 6.3 Improve Documentation (4-6 hours)
+- **Priority:** MEDIUM (maintainability)
+- **Files:** All modules, create `docs/`
+- **Why Now:** Documents all changes
+- **Dependencies:** All previous phases
+- **Risk:** Low
+- **Content:**
+  - API documentation
+  - Architecture diagrams
+  - Development guide
+  - Deployment guide
+
+**Phase 6 Total Time:** ~24-32 hours  
+**Phase 6 Impact:** Ensures quality and enables team collaboration
+
+---
+
+## Implementation Summary
+
+### Timeline Overview
+
+| Phase | Duration | Focus | Total Hours |
+|-------|----------|-------|-------------|
+| Phase 1 | Week 1 | Foundation & Quick Wins | ~3.5 hours |
+| Phase 2 | Week 2 | Critical Performance | ~9-12 hours |
+| Phase 3 | Week 3 | Transaction & Integrity | ~13-18 hours |
+| Phase 4 | Week 4 | Concurrency & Scalability | ~15-20 hours |
+| Phase 5 | Week 5-6 | Code Quality & Architecture | ~32-43 hours |
+| Phase 6 | Week 7 | Testing & Documentation | ~24-32 hours |
+| **Total** | **7 weeks** | **Complete Implementation** | **~97-130 hours** |
+
+### Recommended Approach
+
+**Option A: Full Implementation (7 weeks)**
+- Complete all phases sequentially
+- Best for: Production systems, long-term projects
+- **Estimated Effort:** 97-130 hours (~2.5-3.5 months part-time)
+
+**Option B: Critical Path Only (3 weeks)**
+- Phases 1, 2, 3, and 4.1-4.2 only
+- Best for: Immediate performance needs
+- **Estimated Effort:** ~40-50 hours (~1 month part-time)
+- **Impact:** Addresses all critical issues and major performance problems
+
+**Option C: Quick Wins Only (1 week)**
+- Phase 1 only
+- Best for: Immediate improvements with minimal risk
+- **Estimated Effort:** ~3.5 hours
+- **Impact:** Better code quality, immediate performance gains
+
+### Risk Mitigation Strategy
+
+1. **Test After Each Phase:** Don't proceed to next phase until current phase is tested
+2. **Version Control:** Commit after each completed item
+3. **Backup Strategy:** Backup database before Phase 2 and Phase 3 changes
+4. **Incremental Rollout:** Test with small datasets before large-scale changes
+5. **Monitoring:** Add logging/metrics before Phase 4 (concurrency)
+
+### Dependencies Map
+
+```
+Phase 1 (Foundation)
+  ├─> Phase 2 (Performance) - uses constants, logging
+  ├─> Phase 3 (Integrity) - uses constants
+  └─> Phase 5 (Architecture) - uses constants, logging
+
+Phase 2 (Performance)
+  └─> Phase 4 (Concurrency) - builds on optimizations
+
+Phase 3 (Integrity)
+  └─> Phase 4 (Concurrency) - requires transaction safety
+
+Phase 4 (Concurrency)
+  └─> Phase 5 (Architecture) - easier with concurrent-safe code
+
+Phase 5 (Architecture)
+  └─> Phase 6 (Testing) - tests new architecture
+
+All Phases
+  └─> Phase 6 (Testing) - comprehensive testing
+```
+
+### Success Metrics
+
+After each phase, measure:
+- **Performance:** Feed processing time, download speed, memory usage
+- **Reliability:** Error rates, data consistency, crash frequency
+- **Code Quality:** Test coverage, linting scores, type coverage
+- **User Experience:** Download success rate, resume capability usage
 
 ---
 

@@ -5,6 +5,7 @@ Database query utility functions.
 import sqlite3
 import re
 from typing import Optional, Tuple
+from podcast_fetch.config import EPISODE_STATUS_DOWNLOADED
 
 
 def validate_and_quote_table_name(table_name: str) -> str:
@@ -111,8 +112,8 @@ def has_downloaded_episodes(conn: sqlite3.Connection, podcast_name: str) -> bool
     cursor.execute(f"""
         SELECT COUNT(*) 
         FROM {safe_table_name} 
-        WHERE status = 'downloaded'
-    """)
+        WHERE status = ?
+    """, (EPISODE_STATUS_DOWNLOADED,))
     count = cursor.fetchone()[0]
     return count > 0
 
@@ -141,8 +142,8 @@ def verify_downloaded_files_exist(conn: sqlite3.Connection, podcast_name: str) -
     cursor.execute(f"""
         SELECT Saved_Path 
         FROM {safe_table_name} 
-        WHERE status = 'downloaded' AND Saved_Path IS NOT NULL
-    """)
+        WHERE status = ? AND Saved_Path IS NOT NULL
+    """, (EPISODE_STATUS_DOWNLOADED,))
     
     results = cursor.fetchall()
     total_downloaded = len(results)

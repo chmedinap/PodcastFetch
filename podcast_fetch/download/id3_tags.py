@@ -10,7 +10,8 @@ from podcast_fetch import config
 from podcast_fetch.database.queries import validate_and_quote_table_name
 
 # Set up logging
-logger = logging.getLogger(__name__)
+from podcast_fetch.logging_config import setup_logging
+logger = setup_logging(__name__)
 
 try:
     from mutagen.id3 import ID3, TIT2, TPE1, TALB, TDRC, TRCK, TPOS, TCON, COMM, APIC

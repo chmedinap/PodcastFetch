@@ -15,6 +15,7 @@ setup(
         'feedparser',
         'requests',
         'mutagen',  # For ID3 tag management
+        'tqdm',  # For progress bars
     ],
     python_requires='>=3.7',
     entry_points={
