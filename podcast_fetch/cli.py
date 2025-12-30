@@ -26,6 +26,7 @@ from podcast_fetch import (
     clean_dataframe_for_sqlite,
     add_indexes_to_table,
 )
+from podcast_fetch.database.schema import create_summary_table_if_not_exists
 
 
 def process_feeds_file(feeds_file='feeds.txt'):
@@ -137,6 +138,9 @@ def list_podcasts():
         cursor = conn.cursor()
         
         try:
+            # Ensure summary table exists
+            create_summary_table_if_not_exists(conn)
+            
             # Get all tables (podcasts)
             cursor.execute("""
                 SELECT name FROM sqlite_master 
@@ -155,14 +159,18 @@ def list_podcasts():
             
             for idx, (podcast_name,) in enumerate(podcasts, 1):
                 # Get summary info
-                cursor.execute("SELECT num_episodes, num_episodes_downloaded FROM summary WHERE name = ?", (podcast_name,))
-                result = cursor.fetchone()
-                
-                if result:
-                    total, downloaded = result
-                    print(f"{idx}. {podcast_name}")
-                    print(f"   Episodes: {downloaded}/{total} downloaded")
-                else:
+                try:
+                    cursor.execute("SELECT num_episodes, num_episodes_downloaded FROM summary WHERE name = ?", (podcast_name,))
+                    result = cursor.fetchone()
+                    
+                    if result:
+                        total, downloaded = result
+                        print(f"{idx}. {podcast_name}")
+                        print(f"   Episodes: {downloaded}/{total} downloaded")
+                    else:
+                        print(f"{idx}. {podcast_name}")
+                except sqlite3.Error:
+                    # If summary query fails, just show the podcast name
                     print(f"{idx}. {podcast_name}")
                 print()
             

@@ -7,9 +7,9 @@ from pathlib import Path
 from podcast_fetch.database.queries import table_exists
 
 
-def add_podcast_image_url_to_summary(conn: sqlite3.Connection) -> None:
+def create_summary_table_if_not_exists(conn: sqlite3.Connection) -> None:
     """
-    Add podcast_image_url and rss_feed_url columns to summary table if they don't exist.
+    Create the summary table if it doesn't exist.
     
     Parameters:
     conn: SQLite connection object
@@ -17,13 +17,42 @@ def add_podcast_image_url_to_summary(conn: sqlite3.Connection) -> None:
     cursor = conn.cursor()
     
     # Check if summary table exists
-    cursor.execute("""
-        SELECT name FROM sqlite_master 
-        WHERE type='table' AND name='summary'
-    """)
-    if not cursor.fetchone():
-        print("Summary table does not exist. Cannot add columns.")
-        return
+    if table_exists(conn, 'summary'):
+        return  # Table already exists
+    
+    # Create the summary table with all required columns
+    try:
+        cursor.execute("""
+            CREATE TABLE summary (
+                name TEXT PRIMARY KEY,
+                num_episodes INTEGER,
+                num_episodes_downloaded INTEGER,
+                num_episodes_not_downloaded INTEGER,
+                pct_episodes_downloaded REAL,
+                dataframe_name TEXT,
+                last_episode_downloaded_date TEXT,
+                podcast_image_url TEXT,
+                rss_feed_url TEXT
+            )
+        """)
+        conn.commit()
+        print("  ✓ Created summary table")
+    except sqlite3.Error as e:
+        print(f"  ✗ Error creating summary table: {e}")
+        raise
+
+
+def add_podcast_image_url_to_summary(conn: sqlite3.Connection) -> None:
+    """
+    Add podcast_image_url and rss_feed_url columns to summary table if they don't exist.
+    
+    Parameters:
+    conn: SQLite connection object
+    """
+    # Ensure summary table exists first
+    create_summary_table_if_not_exists(conn)
+    
+    cursor = conn.cursor()
     
     # Get existing columns
     cursor.execute("PRAGMA table_info(summary)")

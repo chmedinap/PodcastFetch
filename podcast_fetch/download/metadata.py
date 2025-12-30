@@ -7,6 +7,7 @@ import logging
 import traceback
 import pandas as pd
 from podcast_fetch.database.queries import table_exists, summary_exists
+from podcast_fetch.database.schema import create_summary_table_if_not_exists
 from podcast_fetch import config
 
 # Set up logging
@@ -36,6 +37,9 @@ def update_summary(conn: sqlite3.Connection, podcast_name: str, podcast_image_ur
     conn: SQLite connection object
     podcast_name: Name of the podcast (table name)
     """
+    # Ensure summary table exists
+    create_summary_table_if_not_exists(conn)
+    
     if not table_exists(conn, podcast_name):
         return
     
