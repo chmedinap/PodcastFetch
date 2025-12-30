@@ -229,13 +229,19 @@ def update_episode_id3_tags_from_db(
         cover_image_path = None
         
         # First, try episode image in episode folder
-        # Search for any file starting with "episode_image" in the episode folder
+        # Image file uses same base name as MP3 file (Episode Title - Podcast Name)
+        # Search for image files with common extensions
         try:
-            episode_image_files = list(episode_folder.glob("episode_image.*"))
-            if episode_image_files:
-                # Get the first matching file (should only be one)
-                cover_image_path = episode_image_files[0]
-                logger.debug(f"Found episode image: {cover_image_path}")
+            # Get the MP3 file name to derive the image name
+            mp3_file = file_path.stem  # Gets filename without extension
+            # Search for image files with the same base name
+            image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+            for ext in image_extensions:
+                image_path = episode_folder / f"{mp3_file}{ext}"
+                if image_path.exists():
+                    cover_image_path = image_path
+                    logger.debug(f"Found episode image: {cover_image_path}")
+                    break
         except Exception as e:
             logger.debug(f"Error searching for episode image: {e}")
         

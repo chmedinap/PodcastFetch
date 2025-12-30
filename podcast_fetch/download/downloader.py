@@ -338,8 +338,11 @@ def download_all_episodes(
         except OSError as e:
             logger.warning(f"Failed to create podcast base folder: {e}")
         
+        # Base filename (without extension) for all episode files
+        base_filename = f"{safe_episode_title} - {podcast_name}"
+        
         # File will be saved as Episode_Title - podcast_name.mp3
-        file_path = episode_folder / f"{safe_episode_title} - {podcast_name}.mp3"
+        file_path = episode_folder / f"{base_filename}.mp3"
         
         # Check if file already exists
         if file_path.exists():
@@ -381,8 +384,9 @@ def download_all_episodes(
             print(f"  ✓ Downloaded successfully!")
             
             # Download episode image FIRST (before updating ID3 tags, so the image is available)
+            # Image will be saved with same base name as MP3 (extension added by _download_image)
             if episode_image_url and episode_image_url.strip():
-                episode_image_path = episode_folder / "episode_image"
+                episode_image_path = episode_folder / base_filename
                 if _download_image(episode_image_url, episode_image_path):
                     print(f"  🖼️  Episode image downloaded: {episode_image_path}")
                 else:
@@ -434,7 +438,8 @@ def download_all_episodes(
                     logger.debug(f"Attempting to extract XML metadata for episode {episode_id} from {rss_feed_url}")
                     episode_xml = get_episode_xml_from_rss(rss_feed_url, episode_id, episode_title, episode_link)
                     if episode_xml:
-                        metadata_path = episode_folder / "episode_metadata.xml"
+                        # XML file uses same base name as MP3
+                        metadata_path = episode_folder / f"{base_filename}.xml"
                         with open(metadata_path, 'w', encoding='utf-8') as f:
                             # Write XML declaration and format the XML
                             f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
