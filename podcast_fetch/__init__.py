@@ -23,7 +23,9 @@ from podcast_fetch.data.collection import (
     get_apple_podcast_info,
     get_episode_xml_from_rss,
     get_cached_rss_content,
-    clear_rss_cache
+    clear_rss_cache,
+    invalidate_rss_cache_entry,
+    get_rss_cache_stats
 )
 from podcast_fetch.data.summary import summarise_podcasts
 
@@ -69,6 +71,13 @@ from podcast_fetch.validation import (
     ValidationError
 )
 
+# Import logging configuration (ensures logging is configured on import)
+from podcast_fetch.logging_config import (
+    setup_logging,
+    get_logger,
+    configure_logging
+)
+
 __all__ = [
     # Config
     'config',
@@ -83,6 +92,8 @@ __all__ = [
     'get_episode_xml_from_rss',
     'get_cached_rss_content',
     'clear_rss_cache',
+    'invalidate_rss_cache_entry',
+    'get_rss_cache_stats',
     # Database functions
     'is_valid_database',
     'get_db_connection',
@@ -118,5 +129,9 @@ __all__ = [
     'validate_file_path',
     'sanitize_podcast_name',
     'ValidationError',
+    # Logging functions
+    'setup_logging',
+    'get_logger',
+    'configure_logging',
 ]
 

@@ -23,6 +23,11 @@ RETRY_DELAY_MAX = 60  # Maximum delay in seconds for exponential backoff
 LOG_LEVEL = 'INFO'  # DEBUG, INFO, WARNING, ERROR, CRITICAL
 LOG_FILE = None  # Set to a file path to enable file logging, None for console only
 
+# RSS Feed Cache Configuration
+RSS_CACHE_TTL_HOURS = 1  # Time-to-live for cached RSS feeds in hours
+RSS_CACHE_MAX_ENTRIES = 50  # Maximum number of RSS feeds to cache
+RSS_CACHE_MAX_SIZE_MB = 100  # Maximum total cache size in megabytes
+
 # File Configuration
 MAX_FILENAME_LENGTH = 200
 FEEDS_FILE = 'feeds.txt'
